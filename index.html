@@ -1,0 +1,96 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NYC Photo Tags</title>
+
+  <script>
+    // set initial view BEFORE first paint to prevent flashing
+    const v = localStorage.getItem('activeView') || 'tagging';
+    document.documentElement.dataset.view = v; // "gallery" or "tagging"
+  </script>
+
+  <link rel="stylesheet" href="css/styles.css" />
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+
+<!-- TAGGING VIEW -->
+<div id="tagging-view" class="page">
+  <div class="tagging-layout">
+    <div class="image-column">
+      <div class="tagging-stage">
+        <div id="image-wrapper">
+          <img id="main-image" />
+          <div id="tag-toggle-icon"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FIXED CONTROLS (OUTSIDE LAYOUT) -->
+  <div class="top-nav">
+    <div class="question-anchor">
+      <button id="questionBtn" class="photo-question" type="button">
+        what do you see?
+      </button>
+
+      <div id="question-popover" class="help-popover">
+        <p>
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+          Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+        </p>
+        <br>
+        <div class="popover-instructions">
+          <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;tap, type, enter<br><br>
+          <img src="images/price-tag.png" alt="tag icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;all image tags<br><br>
+          &gt;&gt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;next photo<br><br>
+          &lt;&lt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;last photo<br><br>
+          all photos&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;photo gallery<br>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button id="prevBtn" class="side-btn left">&lt;&lt;</button>
+  <button id="nextBtn" class="side-btn right">&gt;&gt;</button>
+
+  <div class="bottom-nav">
+    <button id="galleryBtn" class="view-all-btn">all photos</button>
+  </div>
+</div>
+
+<!-- GALLERY VIEW -->
+<div id="gallery-view" class="hidden">
+  <div class="gallery-layout">
+    <aside class="gallery-sidebar">
+      <div class="gallery-sidebar-top">
+        <div class="help-anchor">
+          <button id="galleryHelpBtn" class="gallery-help-btn" type="button">?</button>
+
+          <div id="gallery-help-popup" class="help-popover hidden">
+            <p>
+              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
+              <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter by tag<br><br>
+              <img src="images/scroll lr.png" alt="horiz scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more tags<br><br>
+              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br>
+            </p>
+          </div>
+        </div>
+
+        <button id="clearBtn" class="gallery-clear-btn" type="button">X</button>
+      </div>
+
+      <ul id="gallery-tag-list"></ul>
+    </aside>
+
+    <!-- GRID -->
+    <div id="gallery-grid"></div>
+  </div>
+</div>
+
+</body>
+</html>
