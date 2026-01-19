@@ -638,18 +638,13 @@ function getNextIndexFromDeck() {
 function goNextImage() {
   if (!images.length) return;
 
-  if (forwardStack.length > 0) {
-    historyStack.push(currentIndex);
-    currentIndex = forwardStack.pop();
-    showImage();
-    pushSnapshot(); // ✅
-    return;
-  }
+  // if you're choosing a new random next, forward history no longer applies
+  forwardStack = [];
 
   historyStack.push(currentIndex);
   currentIndex = getNextIndexFromDeck();
   showImage();
-  pushSnapshot(); // ✅
+  pushSnapshot();
 }
 
 function goPrevImage() {
@@ -1116,3 +1111,5 @@ galleryBtn.addEventListener('click', showGallery);
 
 /* ---------- INIT ---------- */
 loadImages();
+
+
