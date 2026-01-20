@@ -39,13 +39,13 @@
 
       <div id="question-popover" class="help-popover">
         <p>
-          Here are the things that catch my eye on walks around my neighborhood in Queens (and elsewhere in NYC.) Tap anywhere in the image to share what you see, too. 
+          These many many photos were taken on many many walks around Ridgewood, Queens and elsewhere in NYC from 2024 to today. Help tag their contents by tapping anywhere in the image to share what you see.
         </p>
         <div class="popover-instructions">
           <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;tap, type, enter<br><br>
           <img src="images/price-tag.png" alt="tag icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;all image tags<br><br>
           &gt;&gt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;next photo<br><br>
-          &lt;&lt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;last photo<br><br>
+          &lt;&lt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;previous photo<br><br>
         </div>
       </div>
     </div>
@@ -64,16 +64,31 @@
   <div class="gallery-layout">
     <aside class="gallery-sidebar">
       <div class="gallery-sidebar-top">
-        <div class="help-anchor">
-          <button id="galleryHelpBtn" class="gallery-help-btn" type="button">?</button>
+        <div class="help-anchor help-desktop">
+          <button class="gallery-help-btn js-help-btn" type="button">?</button>
 
-          <div id="gallery-help-popup" class="help-popover hidden">
+          <div class="help-popover js-help-popover help-popover-desktop hidden">
+
             <p>
-              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br><br>
-              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
               <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter by tag<br><br>
+              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more tags<br><br>
+              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br>
+            </p>
+          </div>
+        </div>
+
+        <div class="help-anchor help-mobile">
+          <button class="gallery-help-btn js-help-btn" type="button">?</button>
+
+           <div class="help-popover js-help-popover help-popover-mobile hidden">
+            <p>
+              <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter by tag<br><br>
+              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
               <img src="images/scroll lr.png" alt="horiz scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more tags<br><br>
-              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br>
+              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br>
             </p>
           </div>
         </div>

@@ -296,23 +296,36 @@ if (clearBtn) {
   });
 }
 
-/* ---------- GALLERY HELP BUTTON --------- */
-if (galleryHelpBtn && galleryHelpPopup) {
-  galleryHelpBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    galleryHelpPopup.classList.toggle('hidden');
-  });
+/* ---------- GALLERY HELP BUTTONS (multiple) --------- */
+document.querySelectorAll('.help-anchor').forEach((anchor) => {
+  const btn = anchor.querySelector('.js-help-btn');
+  const pop = anchor.querySelector('.js-help-popover');
+  if (!btn || !pop) return;
 
-  document.addEventListener('click', (e) => {
-    if (!galleryHelpPopup.classList.contains('hidden')) {
-      const clickedInsidePopup = galleryHelpPopup.contains(e.target);
-      const clickedHelpButton = galleryHelpBtn.contains(e.target);
-      if (!clickedInsidePopup && !clickedHelpButton) {
-        galleryHelpPopup.classList.add('hidden');
-      }
-    }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    // close all other open help popovers
+    document.querySelectorAll('.js-help-popover').forEach((other) => {
+      if (other !== pop) other.classList.add('hidden');
+    });
+
+    pop.classList.toggle('hidden');
   });
-}
+});
+
+// click outside closes any open help popover
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('.help-anchor').forEach((anchor) => {
+    const btn = anchor.querySelector('.js-help-btn');
+    const pop = anchor.querySelector('.js-help-popover');
+    if (!btn || !pop) return;
+
+    const clickedInside = pop.contains(e.target) || btn.contains(e.target);
+    if (!clickedInside) pop.classList.add('hidden');
+  });
+});
+
 
 /*************************************************
   PAN + ZOOM (tagging view)

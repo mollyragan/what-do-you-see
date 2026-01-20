@@ -152,7 +152,7 @@ button{
 #image-wrapper{
   width: 100%;
   height: 100%;
-  background: #d9d9d9;
+  background: white;
   overflow: hidden;
   position: relative;
   touch-action: none;           /* stop page pinch-zoom on this area */
@@ -313,6 +313,7 @@ button{
   font-size: 15px;
   color: black;
 }
+
 
 /* =========================================================
    TAGGING VIEW — DESKTOP (≥ 769px)
@@ -536,7 +537,15 @@ button{
 /* help popover (gallery) */
 .help-anchor{
   position: relative;
-  display: inline-block;
+}
+
+/* desktop default */
+.help-mobile { display: none; }
+
+/* mobile override */
+@media (max-width: 768px){
+  .help-desktop { display: none; }
+  .help-mobile  { display: inline-block; }
 }
 
 .gallery-help-btn{
