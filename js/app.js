@@ -722,7 +722,7 @@ function createTagOverlay(xPx, yPx) {
 
   tagOverlay = document.createElement('input');
   tagOverlay.type = 'text';
-  tagOverlay.placeholder = 'Type tag + hit enter';
+  tagOverlay.placeholder = 'Name what you notice + hit enter';
   tagOverlay.className = 'tag-input';
 
   imageWrapper.appendChild(tagOverlay);

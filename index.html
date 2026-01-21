@@ -1,50 +1,108 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <link rel="stylesheet" href="css/styles.css"/>
-    <script type="module" src="js/app.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>What Do You See?</title>
+
+  <script>
+    // set initial view BEFORE first paint to prevent flashing
+    const v = localStorage.getItem('activeView') || 'tagging';
+    document.documentElement.dataset.view = v; // "gallery" or "tagging"
+  </script>
+
+  <link rel="stylesheet" href="css/styles.css" />
+  <script type="module" src="js/app.js"></script>
 </head>
 <body>
-    <div class="page">
-        <details class="section" id="name">
-            <summary><h1>MOLLY BAKER RAGAN</h1></summary>
-            <div class="h1-grid">
-                <div class="h1-left"><img id="portrait" src="images/molly_portrait_6.jpg" alt="Portrait of Molly"></div>
-                <div class="h1-right">
-                    <details class="section" id="things">
-                        <summary><h2>things</h2></summary>
-                        <details class="section" id="do">
-                            <summary><h3>i do</h2></summary>
-                            <details class="section" id="study">
-                                <summary><h4>study</h4></summary>
-                                <p>
-                                    <a href="https://www.whatdoyousee.nyc">the world around me</a><br>
-                                    <a href="https://www.unlearninglibrary.com">how it got this way</a><br>
-                                    <a href="https://unioncoops.org/">and how workers are changing it</a>
-                                </p>
-                            </details>
-                            <details class="section" id="organize">
-                                <summary><h4>organize</h4></summary>
-                                <p>
-                                i <a href="https://workerorganizing.org/">help workers</a> unionize</a><br>
-                                and fan the flames of <a href="https://nlgmass.org/independent-organizing-network-ion/">independent unionism</a><br>
-                                </p>
-                            </details>
-                            <details class="section" id="teach">
-                                <summary><h4>teach</h4></summary>
-                                <p>critical organizational skills to <a href="https://www.newschool.edu/parsons/bba-design-management/">entrepreneurial design undergrads</a></p>
-                            </details>
-                        </details>
-                        <details class="section" id="see">
-                            <summary><h3>i see</h3></summary>
-                        </details>
-                        <details class="section" id="read">
-                            <summary><h3>i read</h3></summary>
-                        </details>
-                    </details>
-                </div>
-            </div>
-        </details>
+
+<!-- TAGGING VIEW -->
+<div id="tagging-view" class="page">
+  <div class="tagging-layout">
+    <div class="image-column">
+      <div class="tagging-stage">
+        <div id="image-wrapper">
+          <img id="main-image" />
+          <div id="tag-toggle-icon"></div>
+        </div>
+      </div>
     </div>
+  </div>
+
+  <!-- FIXED CONTROLS (OUTSIDE LAYOUT) -->
+  <div class="top-nav">
+    <div class="question-anchor">
+      <button id="questionBtn" class="photo-question" type="button">
+        what do you see?
+      </button>
+
+      <div id="question-popover" class="help-popover">
+        <p>
+          These many many photos were taken on many many walks around Ridgewood, Queens and elsewhere in NYC from 2024 to today. Help tag their contents by tapping anywhere in the image to share what you see.
+        </p>
+        <div class="popover-instructions">
+          <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;tap, type, enter<br><br>
+          <img src="images/price-tag.png" alt="tag icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;all image tags<br><br>
+          &gt;&gt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;next photo<br><br>
+          &lt;&lt;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;previous photo<br><br>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button id="prevBtn" class="side-btn left">&lt;&lt;</button>
+  <button id="nextBtn" class="side-btn right">&gt;&gt;</button>
+
+  <div class="bottom-nav">
+    <button id="galleryBtn" class="view-all-btn">view all</button>
+  </div>
+</div>
+
+<!-- GALLERY VIEW -->
+<div id="gallery-view" class="hidden">
+  <div class="gallery-layout">
+    <aside class="gallery-sidebar">
+      <div class="gallery-sidebar-top">
+        <div class="help-anchor help-desktop">
+          <button class="gallery-help-btn js-help-btn" type="button">?</button>
+
+          <div class="help-popover js-help-popover help-popover-desktop hidden">
+
+            <p>
+              <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter by tag<br><br>
+              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more tags<br><br>
+              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br>
+            </p>
+          </div>
+        </div>
+
+        <div class="help-anchor help-mobile">
+          <button class="gallery-help-btn js-help-btn" type="button">?</button>
+
+           <div class="help-popover js-help-popover help-popover-mobile hidden">
+            <p>
+              <img src="images/hand.png" alt="pointer icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter by tag<br><br>
+              X&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;clear filter(s)<br><br>
+              <img src="images/scroll ud.png" alt="vert scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more photos<br><br>
+              <img src="images/scroll lr.png" alt="horiz scroll icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;see more tags<br><br>
+              <img src="images/pinch.png" alt="zoom icon" class="inline-icon">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;expand gallery<br>
+            </p>
+          </div>
+        </div>
+
+        <button id="clearBtn" class="gallery-clear-btn" type="button">X</button>
+      </div>
+
+      <ul id="gallery-tag-list"></ul>
+    </aside>
+
+    <!-- GRID -->
+    <div id="gallery-grid"></div>
+  </div>
+</div>
+
 </body>
 </html>
