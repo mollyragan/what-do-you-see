@@ -14,7 +14,7 @@ html[data-view="tagging"] #gallery-view { display: none !important; }
   --tag-top: 35px;     /* top bar height */
   --tag-bottom: 35px;  /* bottom bar height */
 
-  --gallery-cols: 3;   /* default */
+  --gallery-cols: 5;   /* default */
 }
 
 /* --- Resets --- */
@@ -210,7 +210,7 @@ button{
   bottom: 10px;
   width: 22px;
   height: 22px;
-  background: url("../images/price-tag.png") no-repeat center center;
+  background: url("../images/search.png") no-repeat center center;
   background-size: contain;
   z-index: 9999;
   display: none;
@@ -227,10 +227,17 @@ button{
   }
 }
 
-.inline-icon{
+.inline-icon-hand{
   height: 1em;
   width: auto;
   vertical-align: -0.15em;
+  margin-right: 4px;
+}
+
+.inline-icon-view{
+  height: 1.3em;
+  width: auto;
+  vertical-align: -0.3em;
   margin-right: 4px;
 }
 
@@ -263,6 +270,14 @@ button{
     font-weight: 700;
     color: black;
   }
+}
+
+#gallery-tag-list .tag-count{
+  opacity: 0.6;
+  font-style: italic;
+  margin-right: 1px;
+  margin-left: 3px;
+  font-size: 11.5px;
 }
 
 /* --- Shared button emphasis --- */
@@ -457,7 +472,7 @@ button{
 .gallery-layout{
   height: 100%;
   display: grid;
-  grid-template-columns: 120px 1fr;
+  grid-template-columns: 130px 1fr;
   gap: 10px;
   padding: 0;
   overflow: hidden;

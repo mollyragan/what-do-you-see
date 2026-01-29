@@ -22,6 +22,7 @@ let forwardStack = [];
 
 let suppressNextTagOpen = false;
 let lastPinchTime = 0;
+let galleryOrderIds = null;
 
 /* ✅ default view on first-ever load */
 if (!localStorage.getItem('activeView')) {
@@ -37,6 +38,15 @@ function shuffleArray(arr) {
   }
   return a;
 }
+
+function getCurrentGalleryOrderIds() {
+  // only meaningful if gallery is visible and grid has items
+  if (!galleryGrid) return null;
+
+  const ids = [...galleryGrid.querySelectorAll('img[data-id]')].map(el => el.dataset.id);
+  return ids.length ? ids : null;
+}
+
 
 /* ---------- DOM ---------- */
 const mainImage = document.getElementById('main-image');
@@ -60,6 +70,23 @@ const clearBtn = document.getElementById('clearBtn');
 const questionBtn = document.getElementById('questionBtn');
 const questionPopover = document.getElementById('question-popover');
 
+const LS_STATE_KEY = 'wdys:lastState';
+
+function saveLastStateToLocalStorage() {
+  try {
+    localStorage.setItem(LS_STATE_KEY, JSON.stringify(getAppStateSnapshot()));
+  } catch {}
+}
+
+function loadLastStateFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(LS_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 /*************************************************
   BROWSER HISTORY (Back/Forward restores view/image/filter)
 *************************************************/
@@ -70,29 +97,29 @@ function getAppStateSnapshot() {
   const view = galleryView.classList.contains('hidden') ? 'tagging' : 'gallery';
 
   return {
-    v: view, // 'tagging' | 'gallery'
-    i: images[currentIndex]?.id ?? null, // current image id (tagging)
-    t: [...selectedGalleryTags],         // selected gallery tags
-    c: galleryZoom?.cols ?? null         // current gallery column count
+    v: view,
+    i: images[currentIndex]?.id ?? null,
+    t: [...selectedGalleryTags],
+    c: galleryZoom?.cols ?? null,
+    go: getCurrentGalleryOrderIds() // ✅ new
   };
 }
+
 
 function applyAppStateSnapshot(st) {
   if (!st) return;
 
-  // restore selected tags
   selectedGalleryTags = new Set(Array.isArray(st.t) ? st.t : []);
-
-  // restore cols (if present)
   if (typeof st.c === 'number') setGalleryCols(st.c);
+
+  galleryOrderIds = Array.isArray(st.go) ? st.go : null;
 
   if (st.v === 'gallery') {
     showGallery({ fromHistory: true, keepFilters: true });
-    // showGallery will call render + update list
+    saveLastStateToLocalStorage();
     return;
   }
 
-  // tagging
   if (st.i != null && images.length) {
     const idx = images.findIndex(im => String(im.id) === String(st.i));
     if (idx !== -1) currentIndex = idx;
@@ -100,16 +127,22 @@ function applyAppStateSnapshot(st) {
 
   showTagging({ fromHistory: true });
   showImage();
+
+  saveLastStateToLocalStorage();
 }
 
 function pushSnapshot() {
   if (suppressHistory) return;
-  history.pushState(getAppStateSnapshot(), "", location.pathname + location.search);
+  const st = getAppStateSnapshot();
+  history.pushState(st, "", location.pathname + location.search);
+  saveLastStateToLocalStorage(); // ✅ durable
 }
 
 function replaceSnapshot() {
   if (suppressHistory) return;
-  history.replaceState(getAppStateSnapshot(), "", location.pathname + location.search);
+  const st = getAppStateSnapshot();
+  history.replaceState(st, "", location.pathname + location.search);
+  saveLastStateToLocalStorage(); // ✅ durable
 }
 
 // Back/Forward handler
@@ -287,14 +320,13 @@ if (questionBtn && questionPopover) {
 }
 
 /* ---------- CLEAR BUTTON --------- */
-if (clearBtn) {
-  clearBtn.addEventListener('click', () => {
-    selectedGalleryTags.clear();
-    updateGalleryTagList();
-    renderGallery();
-    pushSnapshot(); // ✅ history
-  });
-}
+clearBtn.addEventListener('click', () => {
+  galleryOrderIds = null; // ✅ reset order
+  selectedGalleryTags.clear();
+  updateGalleryTagList();
+  renderGallery();
+  pushSnapshot();
+});
 
 /* ---------- GALLERY HELP BUTTONS (multiple) --------- */
 document.querySelectorAll('.help-anchor').forEach((anchor) => {
@@ -597,21 +629,55 @@ async function loadImages() {
 
   if (!images.length) return;
 
-  currentIndex = Math.floor(Math.random() * images.length);
+ // Build default nav state
+historyStack = [];
+forwardStack = [];
 
-  historyStack = [];
-  forwardStack = [];
+// ✅ Try durable restore first
+const persisted = loadLastStateFromLocalStorage();
+
+if (persisted) {
+  // restore selected tags
+  selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
+
+  // restore cols if present
+  if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
+
+  galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
+
+  // restore current image if present (tagging)
+  if (persisted.i != null) {
+    const idx = images.findIndex(im => String(im.id) === String(persisted.i));
+    if (idx !== -1) currentIndex = idx;
+  } else {
+    currentIndex = Math.floor(Math.random() * images.length);
+  }
+
   nextDeck = buildDeck(currentIndex);
 
+  // render once data exists
   showImage();
   renderGallery();
   updateGalleryTagList();
 
-  const lastView = localStorage.getItem('activeView') || 'tagging';
-  if (lastView === 'gallery') showGallery();
-  else showTagging();
+  if (persisted.v === 'gallery') showGallery({ fromHistory: true, keepFilters: true });
+  else showTagging({ fromHistory: true });
 
-  replaceSnapshot();
+  replaceSnapshot(); // writes history.state + localStorage
+  return;
+}
+
+// ✅ Fallback: old behavior if no persisted state
+currentIndex = Math.floor(Math.random() * images.length);
+nextDeck = buildDeck(currentIndex);
+
+showImage();
+renderGallery();
+updateGalleryTagList();
+
+showTagging({ fromHistory: true });
+
+replaceSnapshot();
 
 }
 
@@ -633,13 +699,25 @@ function showImage() {
 
 /* ---------- DECK / NAV ---------- */
 function buildDeck(excludeIndex = null) {
-  const deck = images.map((_, i) => i);
-  if (excludeIndex !== null && deck.length > 1) {
-    const pos = deck.indexOf(excludeIndex);
-    if (pos !== -1) deck.splice(pos, 1);
-  }
-  return shuffleArray(deck);
+  const weighted = [];
+
+  images.forEach((img, i) => {
+    if (excludeIndex !== null && i === excludeIndex) return;
+
+    const tagCount = (img.tags || []).length;
+
+    if (tagCount === 0) {
+      // untagged → weight 3
+      weighted.push(i, i, i);
+    } else {
+      // tagged → weight 1
+      weighted.push(i);
+    }
+  });
+
+  return shuffleArray(weighted);
 }
+
 
 function getNextIndexFromDeck() {
   if (nextDeck.length === 0) {
@@ -651,9 +729,16 @@ function getNextIndexFromDeck() {
 function goNextImage() {
   if (!images.length) return;
 
-  // if you're choosing a new random next, forward history no longer applies
-  forwardStack = [];
+  // If the user previously went backward, "next" should replay forward history first
+  if (forwardStack.length > 0) {
+    historyStack.push(currentIndex);
+    currentIndex = forwardStack.pop();
+    showImage();
+    pushSnapshot();
+    return;
+  }
 
+  // Otherwise, continue random navigation
   historyStack.push(currentIndex);
   currentIndex = getNextIndexFromDeck();
   showImage();
@@ -953,15 +1038,35 @@ function renderGallery() {
 
   galleryGrid.classList.toggle('single-image', filtered.length === 1);
 
-  filtered = shuffleArray(filtered);
+let finalList = filtered;
 
-  galleryGrid.innerHTML = filtered.map((img) => `
-    <img src="${img.url}" loading="lazy" data-id="${img.id}" draggable="false" />
-  `).join('');
+// ✅ If we have a saved order, reuse it (no reshuffle)
+if (Array.isArray(galleryOrderIds) && galleryOrderIds.length) {
+  const byId = new Map(finalList.map(img => [String(img.id), img]));
+  const ordered = [];
+
+  galleryOrderIds.forEach(id => {
+    const img = byId.get(String(id));
+    if (img) ordered.push(img);
+    byId.delete(String(id));
+  });
+
+  for (const img of byId.values()) ordered.push(img);
+
+  finalList = ordered;
+} else {
+  finalList = shuffleArray(finalList);
+}
+
+galleryGrid.innerHTML = finalList.map((img) => `
+  <img src="${img.url}" loading="lazy" data-id="${img.id}" draggable="false" />
+`).join('');
+
 }
 
 /* ---------- GALLERY TAG LIST ---------- */
 function updateGalleryTagList() {
+  // 1) GLOBAL counts + stable sort order
   const globalStats = new Map();
 
   images.forEach((img, imgIndex) => {
@@ -984,19 +1089,34 @@ function updateGalleryTagList() {
     })
     .map(([tag]) => tag);
 
+  // 2) Determine current "matching set" based on selected tags
   const selected = [...selectedGalleryTags];
 
-  const matching = selected.length === 0
+  const matchingImages = selected.length === 0
     ? images
     : images.filter(img =>
         selected.every(tag => (img.tags || []).some(t => t.tag === tag))
       );
 
-  const compatible = new Set();
-  matching.forEach(img => {
-    (img.tags || []).forEach(t => compatible.add(String(t.tag || '').trim().toLowerCase()));
+  // 3) For responsiveness: counts within matching set
+  const matchingCounts = new Map(); // tag -> count within matchingImages
+  matchingImages.forEach(img => {
+    const seenInThisImage = new Set();
+    (img.tags || []).forEach(t => {
+      const tag = String(t.tag || '').trim().toLowerCase();
+      if (!tag) return;
+      // count per-image once (avoid double-count if duplicates ever exist)
+      if (seenInThisImage.has(tag)) return;
+      seenInThisImage.add(tag);
+
+      matchingCounts.set(tag, (matchingCounts.get(tag) || 0) + 1);
+    });
   });
 
+  // 4) compatibility set (same as before)
+  const compatible = new Set(matchingCounts.keys());
+
+  // 5) render list with counts
   galleryTagList.innerHTML = allTagsSorted.map(tag => {
     const isSelected = selectedGalleryTags.has(tag);
     const isCompatible = compatible.has(tag);
@@ -1006,9 +1126,18 @@ function updateGalleryTagList() {
       (!isSelected && selected.length > 0 && !isCompatible) ? 'disabled' : ''
     ].filter(Boolean).join(' ');
 
-    return `<li class="${classes}" data-tag="${tag}">${tag}</li>`;
+    const globalCount = globalStats.get(tag)?.count || 0;
+
+    // if there are active filters, show count within current matching set,
+    // otherwise show global count
+    const displayCount = (selected.length > 0)
+      ? (matchingCounts.get(tag) || 0)
+      : globalCount;
+
+    return `<li class="${classes}" data-tag="${tag}">${tag} <span class="tag-count">(${displayCount})</span></li>`;
   }).join('');
 
+  // 6) click handlers
   galleryTagList.querySelectorAll('li').forEach(li => {
     li.addEventListener('click', () => {
       if (li.classList.contains('disabled')) return;
@@ -1017,10 +1146,10 @@ function updateGalleryTagList() {
       if (selectedGalleryTags.has(tag)) selectedGalleryTags.delete(tag);
       else selectedGalleryTags.add(tag);
 
+      galleryOrderIds = null; // reset order for new filter state
       updateGalleryTagList();
       renderGallery();
-      pushSnapshot(); // ✅ history (filtered gallery states)
-
+      pushSnapshot();
     });
   });
 }
@@ -1054,10 +1183,11 @@ function showGallery(opts = {}) {
   taggingView.classList.add('hidden');
   galleryView.classList.remove('hidden');
 
-  // ✅ only clear filters when explicitly not keeping them
   if (!opts.keepFilters) {
     selectedGalleryTags.clear();
+    galleryOrderIds = null; // ✅ reset order
   }
+
 
   updateGalleryTagList();
 
