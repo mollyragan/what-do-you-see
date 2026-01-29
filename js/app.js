@@ -657,8 +657,6 @@ if (persisted) {
 
   // render once data exists
   showImage();
-  renderGallery();
-  updateGalleryTagList();
 
   if (persisted.v === 'gallery') showGallery({ fromHistory: true, keepFilters: true });
   else showTagging({ fromHistory: true });
@@ -672,8 +670,6 @@ currentIndex = Math.floor(Math.random() * images.length);
 nextDeck = buildDeck(currentIndex);
 
 showImage();
-renderGallery();
-updateGalleryTagList();
 
 showTagging({ fromHistory: true });
 
@@ -1058,9 +1054,38 @@ if (Array.isArray(galleryOrderIds) && galleryOrderIds.length) {
   finalList = shuffleArray(finalList);
 }
 
-galleryGrid.innerHTML = finalList.map((img) => `
-  <img src="${img.url}" loading="lazy" data-id="${img.id}" draggable="false" />
-`).join('');
+// Clear existing grid
+galleryGrid.innerHTML = "";
+
+// Batch-render images to avoid creating/decoding hundreds at once
+const BATCH_SIZE = 60;   // tweak: 30–80 is typical
+let i = 0;
+
+function appendBatch() {
+  const frag = document.createDocumentFragment();
+
+  for (let k = 0; k < BATCH_SIZE && i < finalList.length; k++, i++) {
+    const imgEl = document.createElement("img");
+    imgEl.src = finalList[i].url;
+    imgEl.loading = "lazy";
+    imgEl.decoding = "async";            // ✅ helps reduce jank
+    imgEl.dataset.id = finalList[i].id;
+    imgEl.draggable = false;
+
+    frag.appendChild(imgEl);
+  }
+
+  galleryGrid.appendChild(frag);
+
+  // If more images remain, schedule the next batch when the browser is idle-ish
+  if (i < finalList.length) {
+    if ("requestIdleCallback" in window) requestIdleCallback(appendBatch);
+    else setTimeout(appendBatch, 16);
+  }
+}
+
+appendBatch();
+
 
 }
 
