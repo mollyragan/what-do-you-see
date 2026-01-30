@@ -56,36 +56,6 @@ button{
   overflow: hidden; /* IMPORTANT: children handle scrolling */
 }
 
-/* button */
-.mbr-btn{
-  font-size: 14px;
-  letter-spacing: 0.05em;
-  color: black;
-  padding: 0;
-  opacity: 0.4;
-  font-size: 11.5px;
-}
-
-html[data-view="gallery"] .mbr-anchor{
-  display: none;
-}
-
-/* desktop hover behavior */
-@media (hover: hover) and (pointer: fine){
-  .mbr-popover{ display: none; }
-
-  .mbr-btn:hover + .mbr-popover,
-  .mbr-popover:hover{
-    display: block;
-  }
-}
-
-/* mobile: JS toggles */
-@media (hover: none){
-  .mbr-popover{ display: none; }
-  .mbr-popover.open{ display: block; }
-}
-
 
 /* =========================================================
    GALLERY GRID
@@ -154,6 +124,12 @@ html[data-view="gallery"] .mbr-anchor{
   height: fit-content;
   transform: translate(-50%, -50%);
   z-index: 50000;
+}
+
+.bio{
+  opacity: .5;
+  font-size: 11px;
+  font-style: italic;
 }
 
 /* stage sizing */
