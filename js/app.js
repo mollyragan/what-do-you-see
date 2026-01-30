@@ -87,6 +87,31 @@ function loadLastStateFromLocalStorage() {
   }
 }
 
+/* ---------- MBR POPOVER ---------- */
+const mbrBtn = document.getElementById('mbrBtn');
+const mbrPopover = document.getElementById('mbr-popover');
+
+if (mbrBtn && mbrPopover) {
+  mbrBtn.addEventListener('click', (e) => {
+    if (window.matchMedia('(hover: none)').matches) {
+      e.stopPropagation();
+      mbrPopover.classList.toggle('open');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (
+      window.matchMedia('(hover: none)').matches &&
+      mbrPopover.classList.contains('open') &&
+      !mbrPopover.contains(e.target) &&
+      !mbrBtn.contains(e.target)
+    ) {
+      mbrPopover.classList.remove('open');
+    }
+  });
+}
+
+
 /*************************************************
   BROWSER HISTORY (Back/Forward restores view/image/filter)
 *************************************************/
@@ -303,7 +328,8 @@ if (questionBtn && questionPopover) {
   questionBtn.addEventListener('click', (e) => {
     if (window.matchMedia('(hover: none)').matches) {
       e.stopPropagation();
-      questionPopover.classList.toggle('open');
+      const nowOpen = questionPopover.classList.toggle('open');
+      questionBtn.classList.toggle('is-open', nowOpen);
     }
   });
 
@@ -315,6 +341,7 @@ if (questionBtn && questionPopover) {
       !questionBtn.contains(e.target)
     ) {
       questionPopover.classList.remove('open');
+      questionBtn.classList.remove('is-open');
     }
   });
 }
@@ -657,9 +684,13 @@ if (persisted) {
 
   // render once data exists
   showImage();
+  updateGalleryTagList();
 
-  if (persisted.v === 'gallery') showGallery({ fromHistory: true, keepFilters: true });
-  else showTagging({ fromHistory: true });
+  if (persisted.v === 'gallery') {
+  showGallery({ fromHistory: true, keepFilters: true });
+  } else {
+  showTagging({ fromHistory: true });
+  }
 
   replaceSnapshot(); // writes history.state + localStorage
   return;
@@ -670,6 +701,7 @@ currentIndex = Math.floor(Math.random() * images.length);
 nextDeck = buildDeck(currentIndex);
 
 showImage();
+updateGalleryTagList();
 
 showTagging({ fromHistory: true });
 
@@ -971,7 +1003,7 @@ async function saveTag(tag, x, y) {
 
   const { data, error } = await supabase
     .from('image_tags')
-    .insert([{ image_id: img.id, tag, x, y }])
+    .insert([{ image_id: img.id, tag, x, y}])
     .select()
     .maybeSingle();
 
@@ -1014,6 +1046,22 @@ tagToggleIcon.addEventListener('click', (e) => {
   clearTagElements();
   if (showTags) displayImageTags();
 });
+
+/* ---------- TAG TOGGLE ICON (DESKTOP HOVER) ---------- */
+if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+
+  tagToggleIcon.addEventListener('mouseenter', () => {
+    if (showTags) return; // already shown via click
+    clearTagElements();
+    displayImageTags();
+  });
+
+  tagToggleIcon.addEventListener('mouseleave', () => {
+    if (showTags) return; // user clicked to pin them open
+    clearTagElements();
+  });
+
+}
 
 /* ---------- GALLERY ---------- */
 function renderGallery() {

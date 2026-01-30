@@ -57,6 +57,76 @@ button{
 }
 
 /* =========================================================
+   MBR BUTTON (GLOBAL)
+   ========================================================= */
+
+.mbr-anchor{
+  position: fixed;
+  right: 15px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 60000;
+}
+
+.mbr-popover{
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(-30px, -100%);
+  width: 200px;
+  z-index: 50000;
+  background: white;
+  border: 1px solid #333;
+  padding: 0px 16px;
+  text-align: left;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 768px){
+  .mbr-popover{
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    width: 200px;
+    height: fit-content;
+    transform: translate(-50%, -50%);
+    z-index: 50000;
+  }
+}
+
+
+/* button */
+.mbr-btn{
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  color: black;
+  padding: 0;
+  opacity: 0.4;
+  font-size: 11.5px;
+}
+
+html[data-view="gallery"] .mbr-anchor{
+  display: none;
+}
+
+/* desktop hover behavior */
+@media (hover: hover) and (pointer: fine){
+  .mbr-popover{ display: none; }
+
+  .mbr-btn:hover + .mbr-popover,
+  .mbr-popover:hover{
+    display: block;
+  }
+}
+
+/* mobile: JS toggles */
+@media (hover: none){
+  .mbr-popover{ display: none; }
+  .mbr-popover.open{ display: block; }
+}
+
+
+/* =========================================================
    GALLERY GRID
    ========================================================= */
 
@@ -227,6 +297,13 @@ button{
   }
 }
 
+.inline-icon-gallery{
+  height: 1em;
+  width: auto;
+  vertical-align: -0.15em;
+  margin-right: 4px;
+}
+
 .inline-icon-hand{
   height: 1em;
   width: auto;
@@ -285,12 +362,13 @@ button{
 #nextBtn,
 #galleryBtn,
 .gallery-clear-btn,
-.gallery-help-btn{
+.gallery-help-btn,
+.mbr-btn,
+.view-all-btn{
   font-weight: 400;
 }
 
 @media (hover: hover){
-  #questionBtn:hover,
   #prevBtn:hover,
   #nextBtn:hover,
   .gallery-clear-btn:hover,
@@ -300,8 +378,24 @@ button{
     color: black;
   }
 
-  #galleryBtn:hover{
+  #galleryBtn:hover,
+  #questionBtn:hover,
+  .mbr-btn:hover,
+  .view-all-btn:hover{
     font-weight: 700;
+    color: black;
+  }
+
+  .mbr-btn:hover{
+    opacity: .8;
+  }
+}
+
+/* Mobile: keep Question button bold while popover is open */
+@media (hover: none){
+  #questionBtn.is-open{
+    font-weight: 700;
+    font-size: 15px;
     color: black;
   }
 }
@@ -311,7 +405,8 @@ button{
 #nextBtn:active,
 #galleryBtn:active,
 .gallery-clear-btn:active,
-.gallery-help-btn:active{
+.gallery-help-btn:active,
+.view-all-btn:active{
   font-weight: 700;
   font-size: 15px;
   color: black;
@@ -322,7 +417,8 @@ button{
 #nextBtn:focus-visible,
 #galleryBtn:focus-visible,
 .gallery-clear-btn:focus-visible,
-.gallery-help-btn:focus-visible{
+.gallery-help-btn:focus-visible,
+.view-all-btn:focus-visible{
   font-weight: 700;
   outline: none;
   font-size: 15px;
@@ -364,9 +460,9 @@ button{
   height: var(--tag-bottom);
   display: flex;
   align-items: center;
-  justify-content: center;
   background: white;
   z-index: 100;
+  justify-content: center;
 }
 
 .side-btn{
