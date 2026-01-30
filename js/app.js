@@ -675,41 +675,84 @@ imageWrapper.addEventListener('wheel', (e) => {
 
 /* ---------- LOAD IMAGES ---------- */
 async function loadImages() {
-  // A) Fast list: images only
-  const { data: imgRows, error: imgErr } = await supabase
+  const { data, error } = await supabase
     .from('images')
-    .select('id, url')
+    .select(`
+      id,
+      filename,
+      url,
+      image_tags(id, tag, x, y, tagger_id)
+    `)
     .order('created_at', { ascending: true });
 
-  if (imgErr) { console.error(imgErr); return; }
-  images = (imgRows || []).map(r => ({ ...r, tags: [] }));
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  images = (data || []).map(img => ({
+    ...img,
+    tags: (img.image_tags || []).map(t => ({
+      id: t.id,
+      tag: t.tag,
+      x: t.x,
+      y: t.y
+    }))
+  }));
+
   if (!images.length) return;
 
-  // pick an index + show image ASAP
-  currentIndex = Math.floor(Math.random() * images.length);
+ // Build default nav state
+historyStack = [];
+forwardStack = [];
+
+// ✅ Try durable restore first
+const persisted = loadLastStateFromLocalStorage();
+
+if (persisted) {
+  // restore selected tags
+  selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
+
+  // restore cols if present
+  if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
+
+  galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
+
+  // restore current image if present (tagging)
+  if (persisted.i != null) {
+    const idx = images.findIndex(im => String(im.id) === String(persisted.i));
+    if (idx !== -1) currentIndex = idx;
+  } else {
+    currentIndex = Math.floor(Math.random() * images.length);
+  }
+
+  nextDeck = buildDeck(currentIndex);
+
+  // render once data exists
   showImage();
+  updateGalleryTagList();
 
-  // B) Load tags after first paint
-  queueMicrotask(async () => {
-    const { data: tagRows, error: tagErr } = await supabase
-      .from('image_tags')
-      .select('id, image_id, tag, x, y, tagger_id');
+  if (persisted.v === 'gallery') {
+  showGallery({ fromHistory: true, keepFilters: true });
+  } else {
+  showTagging({ fromHistory: true });
+  }
 
-    if (tagErr) { console.error(tagErr); return; }
+  replaceSnapshot(); // writes history.state + localStorage
+  return;
+}
 
-    const byId = new Map(images.map(im => [String(im.id), im]));
-    (tagRows || []).forEach(t => {
-      const img = byId.get(String(t.image_id));
-      if (img) img.tags.push(t);
-    });
+// ✅ Fallback: old behavior if no persisted state
+currentIndex = Math.floor(Math.random() * images.length);
+nextDeck = buildDeck(currentIndex);
 
-    // refresh tag-dependent UI
-    tagToggleIcon.style.display = images[currentIndex].tags.length ? 'block' : 'none';
-    updateGalleryTagList();
-    if (!galleryView.classList.contains('hidden')) renderGallery();
-  });
+showImage();
+updateGalleryTagList();
 
-  // (your history restore logic can still run, just don’t block showImage on tag loading)
+showTagging({ fromHistory: true });
+
+replaceSnapshot();
+
 }
 
 
