@@ -63,7 +63,7 @@ button{
 .mbr-anchor{
   position: fixed;
   right: 15px;
-  bottom: calc(10px + env(safe-area-inset-bottom));
+  bottom: 25%;
   z-index: 60000;
 }
 
@@ -296,6 +296,25 @@ html[data-view="gallery"] .mbr-anchor{
     transform: scale(1.1) translateZ(0);
   }
 }
+
+/* Make the tag-toggle icon easier to tap on mobile (invisible hit area) */
+#tag-toggle-icon{
+  /* keep your existing styles */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Invisible hit area */
+#tag-toggle-icon::before{
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;   /* tap target size */
+  height: 30px;  /* tap target size */
+  transform: translate(-50%, -50%);
+  pointer-events: auto; /* IMPORTANT: this pseudo element catches taps */
+}
+
 
 .inline-icon-gallery{
   height: 1em;
@@ -547,6 +566,10 @@ html[data-view="gallery"] .mbr-anchor{
   #tag-toggle-icon:hover{
     transform: scale(1.1) translateZ(0);
   }
+}
+
+#question-popover{
+  width: 250px;
 }
   .side-btn.left{ left: 5px; }
   .side-btn.right{ right: 5px; }

@@ -29,6 +29,52 @@ if (!localStorage.getItem('activeView')) {
   localStorage.setItem('activeView', 'tagging');
 }
 
+/* ---------- TAGGER ID (SAFE, CROSS-DEVICE) ---------- */
+const TAGGER_KEY = 'wdys:tagger_id';
+
+function safeLSGet(k) {
+  try { return localStorage.getItem(k); } catch { return null; }
+}
+function safeLSSet(k, v) {
+  try { localStorage.setItem(k, v); } catch {}
+}
+
+function makeClientId() {
+  // Best case: native UUID
+  if (window.crypto && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  // iOS-safe fallback
+  if (window.crypto && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  }
+
+  // Last resort: stable string ID
+  return `mbr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getTaggerId() {
+  let id = safeLSGet(TAGGER_KEY);
+
+  if (!id) {
+    id = makeClientId();
+
+    // Try to persist, but DO NOT depend on it
+    safeLSSet(TAGGER_KEY, id);
+  }
+
+  // Always return *something*
+  return id;
+}
+
+
 /* ---------- HELPERS ---------- */
 function shuffleArray(arr) {
   const a = arr.slice();
@@ -635,7 +681,7 @@ async function loadImages() {
       id,
       filename,
       url,
-      image_tags(id, tag, x, y)
+      image_tags(id, tag, x, y, tagger_id)
     `)
     .order('created_at', { ascending: true });
 
@@ -1001,9 +1047,11 @@ function findNonOverlappingPosition(el, startLeft, startTop, wrapRect, others, s
 async function saveTag(tag, x, y) {
   const img = images[currentIndex];
 
+  const tagger_id = getTaggerId();
+
   const { data, error } = await supabase
     .from('image_tags')
-    .insert([{ image_id: img.id, tag, x, y}])
+    .insert([{ image_id: img.id, tag, x, y, tagger_id }])
     .select()
     .maybeSingle();
 
