@@ -12,7 +12,8 @@ let currentIndex = 0;
 
 let tagOverlay = null;
 let tagElements = [];
-let showTags = false;
+let showMineTags = false;
+let showAllTags = false;
 
 let selectedGalleryTags = new Set();
 
@@ -489,10 +490,11 @@ function zoomAt(clientX, clientY, newScale){
   clampPan();
   applyTransform();
 
-  if (showTags) {
+  if (showMineTags || showAllTags) {
     clearTagElements();
     displayImageTags();
   }
+
 }
 
 function wrapperPointToImageRel(clientX, clientY){
@@ -594,10 +596,11 @@ imageWrapper.addEventListener('pointermove', (e) => {
   clampPan();
   applyTransform();
 
-  if (showTags) {
-    clearTagElements();
-    displayImageTags();
+  if (showMineTags || showAllTags) {
+  clearTagElements();
+  displayImageTags();
   }
+
 });
 
 imageWrapper.addEventListener('pointerup', (e) => {
@@ -696,7 +699,8 @@ async function loadImages() {
       id: t.id,
       tag: t.tag,
       x: t.x,
-      y: t.y
+      y: t.y,
+      tagger_id: t.tagger_id
     }))
   }));
 
@@ -767,7 +771,11 @@ function showImage() {
 
   clearTagElements();
   removeTagOverlay();
-  showTags = false;
+  if (showMineTags || showAllTags) {
+  clearTagElements();
+  displayImageTags();
+}
+
   tagToggleIcon.style.display = (img.tags && img.tags.length) ? 'block' : 'none';
 }
 
@@ -939,14 +947,15 @@ function createTagOverlay(xPx, yPx) {
     const xRel = ix / wrap.width;
     const yRel = iy / wrap.height;
 
-    showTags = true;
+    showMineTags = true;
+    showAllTags = false;
     tagToggleIcon.style.display = 'block';
 
     await saveTag(tagText, xRel, yRel);
     saved = true;
 
     clearTagElements();
-    displayImageTags();
+    displayImageTags(); 
   }
 
   tagOverlay.addEventListener('keydown', async (e) => {
@@ -1075,8 +1084,15 @@ async function saveTag(tag, x, y) {
 function displayImageTags() {
   const img = images[currentIndex];
   const rect = imageWrapper.getBoundingClientRect();
+  const myId = getTaggerId();
 
-  (img.tags || []).forEach(t => {
+  const list = (img.tags || []).filter(t => {
+    if (showAllTags) return true;
+    if (showMineTags) return String(t.tagger_id) === String(myId);
+    return false;
+  });
+
+  list.forEach(t => {
     const baseX = t.x * rect.width;
     const baseY = t.y * rect.height;
 
@@ -1087,28 +1103,37 @@ function displayImageTags() {
   });
 }
 
+
 /* ---------- TAG TOGGLE ICON ---------- */
 tagToggleIcon.addEventListener('click', (e) => {
   e.stopPropagation();
-  showTags = !showTags;
+
+  showAllTags = !showAllTags;
+  if (showAllTags) showMineTags = false; // ✅ "all" overrides "mine"
+
   clearTagElements();
-  if (showTags) displayImageTags();
+  if (showAllTags) displayImageTags();
 });
+
 
 /* ---------- TAG TOGGLE ICON (DESKTOP HOVER) ---------- */
 if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
-
   tagToggleIcon.addEventListener('mouseenter', () => {
-    if (showTags) return; // already shown via click
+    // only preview all tags if user hasn't toggled all-tags on
+    if (showAllTags) return;
+    showAllTags = true;
+    showMineTags = false;
     clearTagElements();
     displayImageTags();
   });
 
   tagToggleIcon.addEventListener('mouseleave', () => {
-    if (showTags) return; // user clicked to pin them open
-    clearTagElements();
+    // if user didn't click to keep all-tags open, remove preview
+    if (showAllTags) {
+      showAllTags = false;
+      clearTagElements();
+    }
   });
-
 }
 
 /* ---------- GALLERY ---------- */
@@ -1346,7 +1371,11 @@ function goToGalleryFilteredByTag(tag) {
   selectedGalleryTags.clear();
   selectedGalleryTags.add(tag);
 
-  showTags = false;
+  if (showMineTags || showAllTags) {
+  clearTagElements();
+  displayImageTags();
+  }
+
   clearTagElements();
   removeTagOverlay();
 
