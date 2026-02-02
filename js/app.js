@@ -94,6 +94,16 @@ function getCurrentGalleryOrderIds() {
   return ids.length ? ids : null;
 }
 
+function resetGalleryViewport() {
+  // reset to the "root" cols for this viewport
+  initGalleryCols();
+
+  // reset scroll to top (do it after DOM updates too)
+  if (galleryGrid) {
+    galleryGrid.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }
+}
+
 
 /* ---------- DOM ---------- */
 const mainImage = document.getElementById('main-image');
@@ -395,12 +405,14 @@ if (questionBtn && questionPopover) {
 
 /* ---------- CLEAR BUTTON --------- */
 clearBtn.addEventListener('click', () => {
-  galleryOrderIds = null; // ✅ reset order
+  galleryOrderIds = null;
   selectedGalleryTags.clear();
   updateGalleryTagList();
   renderGallery();
+  resetGalleryViewport(); // ✅
   pushSnapshot();
 });
+
 
 /* ---------- GALLERY HELP BUTTONS (multiple) --------- */
 document.querySelectorAll('.help-anchor').forEach((anchor) => {
@@ -1284,21 +1296,31 @@ function updateGalleryTagList() {
   }).join('');
 
   // 6) click handlers
-  galleryTagList.querySelectorAll('li').forEach(li => {
+  galleryTagList.querySelectorAll('li').forEach((li) => {
     li.addEventListener('click', () => {
       if (li.classList.contains('disabled')) return;
 
       const tag = li.dataset.tag;
+      const before = [...selectedGalleryTags].sort().join('|');
+
       if (selectedGalleryTags.has(tag)) selectedGalleryTags.delete(tag);
       else selectedGalleryTags.add(tag);
 
+      const after = [...selectedGalleryTags].sort().join('|');
+      const filterChanged = before !== after;
+
       galleryOrderIds = null; // reset order for new filter state
+
       updateGalleryTagList();
       renderGallery();
+
+      if (filterChanged) resetGalleryViewport(); // ✅ reset cols + scroll
+
       pushSnapshot();
     });
   });
 }
+
 
 function scrollSelectedTagIntoView(offsetItems = 2) {
   if (!galleryTagList) return;
@@ -1404,5 +1426,3 @@ galleryBtn.addEventListener('click', showGallery);
 
 /* ---------- INIT ---------- */
 loadImages();
-
-
