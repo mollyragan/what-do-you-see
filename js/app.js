@@ -339,6 +339,10 @@ const galleryZoom = {
   startCols: 3,
 };
 
+function isDesktop() {
+  return window.innerWidth >= 900;
+}
+
 function setGalleryCols(n){
   galleryZoom.cols = Math.max(galleryZoom.minCols, Math.min(galleryZoom.maxCols, n));
   document.documentElement.style.setProperty('--gallery-cols', String(galleryZoom.cols));
@@ -347,12 +351,24 @@ function setGalleryCols(n){
 function colsForFilteredCount(count){
   const n = Math.max(0, count || 0);
 
-  if (n <= 1) return 1;     // 0 or 1 image
-  if (n <= 10) return 2;    // 2–10
-  if (n <= 15) return 3;    // 11–15
-  if (n <= 20) return 4;    // 11–20
-  return 5;                 // 21+ (maxcols)
+  // 📱 MOBILE (unchanged behavior)
+  if (!isDesktop()) {
+    if (n <= 1) return 1;
+    if (n <= 10) return 2;
+    if (n <= 15) return 3;
+    if (n <= 20) return 4;
+    return 5;
+  }
+
+  // 🖥️ DESKTOP (new behavior)
+  if (n <= 1)  return 1;
+  if (n <= 5)  return 2;
+  if (n <= 10) return 3;
+  if (n <= 15) return 4;
+  if (n <= 20) return 5;
+  return 10;
 }
+
 
 function setColsForImageCount(count){
   setGalleryCols(colsForFilteredCount(count));
@@ -364,7 +380,7 @@ function initGalleryCols(){
   const w = window.innerWidth;
   if (w < 480) setGalleryCols(5);
   else if (w < 900) setGalleryCols(5);
-  else setGalleryCols(5);
+  else setGalleryCols(10);
 }
 
 initGalleryCols();
