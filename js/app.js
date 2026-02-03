@@ -12,8 +12,9 @@ let currentIndex = 0;
 
 let tagOverlay = null;
 let tagElements = [];
-let showMineTags = false;
 let showAllTags = false;
+let sessionTagsByImageId = new Map(); // imageId -> [{ tag, xRel, yRel }]
+
 
 let selectedGalleryTags = new Set();
 
@@ -24,6 +25,14 @@ let forwardStack = [];
 let suppressNextTagOpen = false;
 let lastPinchTime = 0;
 let galleryOrderIds = null;
+
+let allTagsPinned = false;
+let suppressTagIconHoverUntil = 0;
+const TAG_FLASH_MS = 650;
+let suppressAllTagRender = false;
+let holdSessionTagsVisible = false; // NEW: session tags stay visible while toggle is “off”
+
+
 
 /* ✅ default view on first-ever load */
 if (!localStorage.getItem('activeView')) {
@@ -95,18 +104,101 @@ function getCurrentGalleryOrderIds() {
 }
 
 function resetGalleryViewport() {
-  // reset to the "root" cols for this viewport
-  initGalleryCols();
-
-  // reset scroll to top (do it after DOM updates too)
   if (galleryGrid) {
     galleryGrid.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }
+}
+
+function getFilteredImages() {
+  if (selectedGalleryTags.size === 0) return images;
+
+  return images.filter(img =>
+    [...selectedGalleryTags].every(tag =>
+      (img.tags || []).some(t => t.tag === tag)
+    )
+  );
+}
+
+function getSessionTagsForCurrentImage() {
+  const img = images[currentIndex];
+  if (!img) return [];
+  return sessionTagsByImageId.get(String(img.id)) || [];
+}
+
+function clearSessionTagsForCurrentImage() {
+  const img = images[currentIndex];
+  if (!img) return;
+  sessionTagsByImageId.delete(String(img.id));
+}
+
+function displaySessionTags() {
+  const img = images[currentIndex];
+  if (!img) return;
+
+  const rect = imageWrapper.getBoundingClientRect();
+  const list = getSessionTagsForCurrentImage();
+
+  list.forEach(t => {
+    const baseX = t.x * rect.width;
+    const baseY = t.y * rect.height;
+
+    const xPx = baseX * pz.scale + pz.x;
+    const yPx = baseY * pz.scale + pz.y;
+
+    createTagElement(t.tag, xPx, yPx);
+  });
+}
+
+function displayAllPlusSessionTags() {
+  const img = images[currentIndex];
+  if (!img) return;
+
+  const rect = imageWrapper.getBoundingClientRect();
+
+  const dbTags = (img.tags || []).map(t => ({ tag: t.tag, x: t.x, y: t.y }));
+  const sessionTags = getSessionTagsForCurrentImage();
+
+  // dedupe by tag text + approx position
+  const seen = new Set();
+  const combined = [];
+  for (const t of [...dbTags, ...sessionTags]) {
+    const k = `${String(t.tag).toLowerCase()}@${Math.round(t.x*1000)},${Math.round(t.y*1000)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    combined.push(t);
+  }
+
+  combined.forEach(t => {
+    const baseX = t.x * rect.width;
+    const baseY = t.y * rect.height;
+
+    const xPx = baseX * pz.scale + pz.x;
+    const yPx = baseY * pz.scale + pz.y;
+
+    createTagElement(t.tag, xPx, yPx);
+  });
+}
+
+function resetTagDisplayForCurrentImage({ showSession = false } = {}) {
+  showAllTags = false;
+  allTagsPinned = false;
+  holdSessionTagsVisible = false; 
+
+  clearTagElements();
+  removeTagOverlay();
+
+  if (showSession) {
+    const session = getSessionTagsForCurrentImage();
+    if (session.length) displaySessionTags();
   }
 }
 
 
 /* ---------- DOM ---------- */
 const mainImage = document.getElementById('main-image');
+mainImage.decoding = "async";
+mainImage.loading = "eager";
+mainImage.setAttribute("fetchpriority", "high");
 const nextBtn = document.getElementById('nextBtn');
 const prevBtn = document.getElementById('prevBtn');
 const galleryBtn = document.getElementById('galleryBtn');
@@ -252,20 +344,48 @@ function setGalleryCols(n){
   document.documentElement.style.setProperty('--gallery-cols', String(galleryZoom.cols));
 }
 
-function setColsForImageCount(count){
-  const desired = Math.max(1, Math.min(3, count || 1));
-  setGalleryCols(desired);
+function colsForFilteredCount(count){
+  const n = Math.max(0, count || 0);
+
+  if (n <= 1) return 1;     // 0 or 1 image
+  if (n <= 10) return 2;    // 2–10
+  if (n <= 15) return 3;    // 11–15
+  if (n <= 20) return 4;    // 11–20
+  return 5;                 // 21+ (maxcols)
 }
+
+function setColsForImageCount(count){
+  setGalleryCols(colsForFilteredCount(count));
+}
+
+
 
 function initGalleryCols(){
   const w = window.innerWidth;
-  if (w < 480) setGalleryCols(3);
-  else if (w < 900) setGalleryCols(4);
+  if (w < 480) setGalleryCols(5);
+  else if (w < 900) setGalleryCols(5);
   else setGalleryCols(5);
 }
 
 initGalleryCols();
-window.addEventListener('resize', initGalleryCols);
+window.addEventListener('resize', () => {
+  // If filtered, keep the "auto fit" cols based on filtered results
+  if (selectedGalleryTags.size > 0) {
+    const filtered = getFilteredImages();
+    setColsForImageCount(filtered.length);
+  } else {
+    initGalleryCols();
+  }
+});
+
+window.addEventListener('orientationchange', () => {
+  if (selectedGalleryTags.size > 0) {
+    const filtered = getFilteredImages();
+    setColsForImageCount(filtered.length);
+  } else {
+    initGalleryCols();
+  }
+});
 
 if (galleryGrid) {
   /* Smooth desktop pinch zoom (trackpad) */
@@ -502,10 +622,10 @@ function zoomAt(clientX, clientY, newScale){
   clampPan();
   applyTransform();
 
-  if (showMineTags || showAllTags) {
-    clearTagElements();
-    displayImageTags();
-  }
+ if (showAllTags && !suppressAllTagRender) {
+  clearTagElements();
+  displayAllPlusSessionTags();
+}
 
 }
 
@@ -608,10 +728,10 @@ imageWrapper.addEventListener('pointermove', (e) => {
   clampPan();
   applyTransform();
 
-  if (showMineTags || showAllTags) {
+  if (showAllTags && !suppressAllTagRender) {
   clearTagElements();
-  displayImageTags();
-  }
+  displayAllPlusSessionTags();
+}
 
 });
 
@@ -690,14 +810,10 @@ imageWrapper.addEventListener('wheel', (e) => {
 
 /* ---------- LOAD IMAGES ---------- */
 async function loadImages() {
+  // ✅ FAST FIRST LOAD: fetch only image rows (no join)
   const { data, error } = await supabase
     .from('images')
-    .select(`
-      id,
-      filename,
-      url,
-      image_tags(id, tag, x, y, tagger_id)
-    `)
+    .select('id, filename, url')
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -705,70 +821,127 @@ async function loadImages() {
     return;
   }
 
-  images = (data || []).map(img => ({
-    ...img,
-    tags: (img.image_tags || []).map(t => ({
-      id: t.id,
-      tag: t.tag,
-      x: t.x,
-      y: t.y,
-      tagger_id: t.tagger_id
-    }))
-  }));
-
+  // Build images array with empty tags for now
+  images = (data || []).map(img => ({ ...img, tags: [] }));
   if (!images.length) return;
 
- // Build default nav state
-historyStack = [];
-forwardStack = [];
+  // Build default nav state
+  historyStack = [];
+  forwardStack = [];
 
-// ✅ Try durable restore first
-const persisted = loadLastStateFromLocalStorage();
+  // ✅ restore persisted state if exists (same behavior as before)
+  const persisted = loadLastStateFromLocalStorage();
 
-if (persisted) {
-  // restore selected tags
-  selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
+  if (persisted) {
+    selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
 
-  // restore cols if present
-  if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
+    if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
+    galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
 
-  galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
-
-  // restore current image if present (tagging)
-  if (persisted.i != null) {
-    const idx = images.findIndex(im => String(im.id) === String(persisted.i));
-    if (idx !== -1) currentIndex = idx;
+    if (persisted.i != null) {
+      const idx = images.findIndex(im => String(im.id) === String(persisted.i));
+      if (idx !== -1) currentIndex = idx;
+      else currentIndex = Math.floor(Math.random() * images.length);
+    } else {
+      currentIndex = Math.floor(Math.random() * images.length);
+    }
   } else {
     currentIndex = Math.floor(Math.random() * images.length);
   }
 
   nextDeck = buildDeck(currentIndex);
 
-  // render once data exists
+  // ✅ SHOW FIRST IMAGE IMMEDIATELY (this is the whole point)
   showImage();
-  updateGalleryTagList();
-
-  if (persisted.v === 'gallery') {
-  showGallery({ fromHistory: true, keepFilters: true });
-  } else {
+  updateGalleryTagList(); // will be "empty-ish" until tags hydrate
   showTagging({ fromHistory: true });
-  }
+  replaceSnapshot();
 
-  replaceSnapshot(); // writes history.state + localStorage
-  return;
+  // ✅ Now fetch tags for the CURRENT image so the toggle icon works quickly
+  hydrateTagsForOneImage(images[currentIndex]?.id);
+
+  // ✅ Hydrate ALL tags in the background (gallery + counts)
+  if ("requestIdleCallback" in window) {
+    requestIdleCallback(hydrateAllTags);
+  } else {
+    setTimeout(hydrateAllTags, 0);
+  }
 }
 
-// ✅ Fallback: old behavior if no persisted state
-currentIndex = Math.floor(Math.random() * images.length);
-nextDeck = buildDeck(currentIndex);
+async function hydrateTagsForOneImage(imageId) {
+  if (!imageId) return;
 
-showImage();
-updateGalleryTagList();
+  const { data, error } = await supabase
+    .from('image_tags')
+    .select('id, tag, x, y, tagger_id, image_id')
+    .eq('image_id', imageId);
 
-showTagging({ fromHistory: true });
+  if (error) {
+    console.error(error);
+    return;
+  }
 
-replaceSnapshot();
+  const idx = images.findIndex(im => String(im.id) === String(imageId));
+  if (idx === -1) return;
 
+  images[idx].tags = (data || []).map(t => ({
+    id: t.id,
+    tag: t.tag,
+    x: t.x,
+    y: t.y,
+    tagger_id: t.tagger_id
+  }));
+
+  // refresh icon + (if tags currently visible) redraw them
+  if (idx === currentIndex) {
+    tagToggleIcon.style.display = images[idx].tags.length ? 'block' : 'none';
+    if (showAllTags && !suppressAllTagRender) {
+  clearTagElements();
+  displayAllPlusSessionTags();
+}
+  }
+}
+
+async function hydrateAllTags() {
+  const { data, error } = await supabase
+    .from('image_tags')
+    .select('id, tag, x, y, tagger_id, image_id');
+
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  // group tags by image_id
+  const byImage = new Map();
+  (data || []).forEach(t => {
+    const key = String(t.image_id);
+    if (!byImage.has(key)) byImage.set(key, []);
+    byImage.get(key).push({
+      id: t.id,
+      tag: t.tag,
+      x: t.x,
+      y: t.y,
+      tagger_id: t.tagger_id
+    });
+  });
+
+  // merge into images[]
+  images.forEach(img => {
+    img.tags = byImage.get(String(img.id)) || img.tags || [];
+  });
+
+  // now tag list + counts become accurate
+  updateGalleryTagList();
+
+  // if user is in gallery, rerender
+  if (!galleryView.classList.contains('hidden')) {
+    renderGallery();
+  }
+
+  // ensure current icon correct
+  const cur = images[currentIndex];
+  if (cur) tagToggleIcon.style.display = (cur.tags?.length ? 'block' : 'none');
 }
 
 
@@ -777,19 +950,18 @@ function showImage() {
   if (!images.length) return;
   const img = images[currentIndex];
 
+  mainImage.removeAttribute("src");
   mainImage.src = img.url;
 
   resetPanZoom();
 
-  clearTagElements();
-  removeTagOverlay();
-  if (showMineTags || showAllTags) {
-  clearTagElements();
-  displayImageTags();
-}
+  // OFF means nothing visible
+  resetTagDisplayForCurrentImage({ showSession: false });
 
   tagToggleIcon.style.display = (img.tags && img.tags.length) ? 'block' : 'none';
 }
+
+
 
 /* ---------- DECK / NAV ---------- */
 function buildDeck(excludeIndex = null) {
@@ -959,15 +1131,43 @@ function createTagOverlay(xPx, yPx) {
     const xRel = ix / wrap.width;
     const yRel = iy / wrap.height;
 
-    showMineTags = true;
-    showAllTags = false;
+    // ✅ remember what the user was seeing at the moment they hit Enter
+    const wasShowingAll = showAllTags || allTagsPinned;
+
     tagToggleIcon.style.display = 'block';
 
-    await saveTag(tagText, xRel, yRel);
-    saved = true;
+    // lock rendering while saving
+suppressAllTagRender = true;
 
-    clearTagElements();
-    displayImageTags(); 
+await saveTag(tagText, xRel, yRel);
+saved = true;
+
+// record session tag
+const imgId = String(images[currentIndex].id);
+const list = sessionTagsByImageId.get(imgId) || [];
+list.push({ tag: tagText, x: xRel, y: yRel });
+sessionTagsByImageId.set(imgId, list);
+
+// now render based on pinned state
+clearTagElements();
+
+if (allTagsPinned) {
+  // toggle ON (pinned): show everything
+  showAllTags = true;
+  displayAllPlusSessionTags();
+  holdSessionTagsVisible = false;
+} else {
+  // toggle OFF: show session tags and KEEP them visible
+  showAllTags = false;
+  holdSessionTagsVisible = true;
+  displaySessionTags();
+}
+
+requestAnimationFrame(() => {
+  suppressAllTagRender = false;
+});
+
+
   }
 
   tagOverlay.addEventListener('keydown', async (e) => {
@@ -1072,9 +1272,17 @@ async function saveTag(tag, x, y) {
 
   const { data, error } = await supabase
     .from('image_tags')
-    .insert([{ image_id: img.id, tag, x, y, tagger_id }])
-    .select()
-    .maybeSingle();
+    .insert([{
+      image_id: img.id,
+      image_filename: img.filename,
+      tag,
+      x,
+      y,
+      tagger_id: getTaggerId()
+    }])
+    .select('id, tag, x, y, tagger_id')
+    .single();
+
 
   if (error) {
     if (error.code === '23505') return;
@@ -1096,13 +1304,8 @@ async function saveTag(tag, x, y) {
 function displayImageTags() {
   const img = images[currentIndex];
   const rect = imageWrapper.getBoundingClientRect();
-  const myId = getTaggerId();
 
-  const list = (img.tags || []).filter(t => {
-    if (showAllTags) return true;
-    if (showMineTags) return String(t.tagger_id) === String(myId);
-    return false;
-  });
+  const list = (img.tags || []); // ✅ always all tags (no mine vs all)
 
   list.forEach(t => {
     const baseX = t.x * rect.width;
@@ -1116,37 +1319,52 @@ function displayImageTags() {
 }
 
 
-/* ---------- TAG TOGGLE ICON ---------- */
+/* ---------- TAG TOGGLE ICON (CLICK) ---------- */
 tagToggleIcon.addEventListener('click', (e) => {
   e.stopPropagation();
 
-  showAllTags = !showAllTags;
-  if (showAllTags) showMineTags = false; // ✅ "all" overrides "mine"
+  // If pinned → clicking turns OFF and hides EVERYTHING
+  if (allTagsPinned) {
+    // ✅ END THE SESSION for this image
+    clearSessionTagsForCurrentImage();   // <--- ADD THIS
+
+    holdSessionTagsVisible = false;
+    resetTagDisplayForCurrentImage({ showSession: false });
+    return;
+  }
+
+  // Otherwise pin ON
+  holdSessionTagsVisible = false;
+  allTagsPinned = true;
+  showAllTags = true;
 
   clearTagElements();
-  if (showAllTags) displayImageTags();
+  displayAllPlusSessionTags();
 });
 
 
-/* ---------- TAG TOGGLE ICON (DESKTOP HOVER) ---------- */
+
+/* ---------- TAG TOGGLE ICON (DESKTOP HOVER PREVIEW) ---------- */
 if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
   tagToggleIcon.addEventListener('mouseenter', () => {
-    // only preview all tags if user hasn't toggled all-tags on
-    if (showAllTags) return;
+    if (allTagsPinned) return;           // ✅ do not override pinned state
+    if (suppressAllTagRender) return;
+
     showAllTags = true;
-    showMineTags = false;
     clearTagElements();
-    displayImageTags();
+    displayAllPlusSessionTags();
   });
 
-  tagToggleIcon.addEventListener('mouseleave', () => {
-    // if user didn't click to keep all-tags open, remove preview
-    if (showAllTags) {
-      showAllTags = false;
-      clearTagElements();
-    }
-  });
+tagToggleIcon.addEventListener('mouseleave', () => {
+  if (allTagsPinned) return;
+  if (suppressAllTagRender) return;
+
+  showAllTags = false;
+  clearTagElements();     // hide ALL tags (including session)
+});
 }
+
+
 
 /* ---------- GALLERY ---------- */
 function renderGallery() {
@@ -1321,24 +1539,46 @@ function updateGalleryTagList() {
   });
 }
 
-
-function scrollSelectedTagIntoView(offsetItems = 2) {
+function scrollSelectedTagIntoView(desktopOffsetItems = 2) {
   if (!galleryTagList) return;
 
+  // wait for: view swap + UL innerHTML update + layout
   requestAnimationFrame(() => {
-    const selectedEl = galleryTagList.querySelector('li.selected');
-    if (!selectedEl) return;
+    requestAnimationFrame(() => {
+      const selectedEl = galleryTagList.querySelector('li.selected');
+      if (!selectedEl) return;
 
-    const container = galleryTagList;
-    const itemHeight = selectedEl.offsetHeight;
-    const targetTop = selectedEl.offsetTop - itemHeight * offsetItems;
+      const scroller = galleryTagList;
 
-    container.scrollTo({
-      top: Math.max(0, targetTop),
-      behavior: 'smooth'
+      const canScrollX = scroller.scrollWidth > scroller.clientWidth;
+      const canScrollY = scroller.scrollHeight > scroller.clientHeight;
+
+      // MOBILE: horizontal scrolling (wrapped columns)
+      // Goal: bring the selected tag's *column* to the far left (no offset)
+      if (canScrollX && !canScrollY) {
+        // In a column-wrapped flex scroller, offsetLeft is effectively the column's x-position.
+        // So just align that column to the left edge.
+        const targetLeft = selectedEl.offsetLeft;
+
+        scroller.scrollTo({
+          left: Math.max(0, targetLeft),
+          behavior: 'auto'
+        });
+        return;
+      }
+
+      // DESKTOP: vertical list (keep your nice "2 rows above" behavior)
+      const itemH = selectedEl.offsetHeight || 0;
+      const targetTop = selectedEl.offsetTop - itemH * desktopOffsetItems;
+
+      scroller.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: 'auto'
+      });
     });
   });
 }
+
 
 /* ---------- SHOW/HIDE VIEWS ---------- */
 function setActiveView(view) {
@@ -1393,7 +1633,7 @@ function goToGalleryFilteredByTag(tag) {
   selectedGalleryTags.clear();
   selectedGalleryTags.add(tag);
 
-  if (showMineTags || showAllTags) {
+  if (showAllTags) {
   clearTagElements();
   displayImageTags();
   }
