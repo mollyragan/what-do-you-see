@@ -870,7 +870,19 @@ async function loadImages() {
   // ✅ SHOW FIRST IMAGE IMMEDIATELY (this is the whole point)
   showImage();
   updateGalleryTagList(); // will be "empty-ish" until tags hydrate
-  showTagging({ fromHistory: true });
+
+  // ✅ Restore last view on hard refresh (history.state is empty on reload)
+  const startView =
+    (persisted && persisted.v) ||
+    (localStorage.getItem('activeView') || 'tagging');
+
+  if (startView === 'gallery') {
+    showGallery({ fromHistory: true, keepFilters: true });
+  } else {
+    showTagging({ fromHistory: true });
+  }
+
+  // ✅ Ensure history + localStorage reflect the current state
   replaceSnapshot();
 
   // ✅ Now fetch tags for the CURRENT image so the toggle icon works quickly
@@ -883,6 +895,7 @@ async function loadImages() {
     setTimeout(hydrateAllTags, 0);
   }
 }
+
 
 async function hydrateTagsForOneImage(imageId) {
   if (!imageId) return;
