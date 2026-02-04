@@ -845,7 +845,7 @@ async function loadImages() {
   historyStack = [];
   forwardStack = [];
 
-  // ✅ restore persisted state if exists (same behavior as before)
+  // ✅ restore persisted state if exists
   const persisted = loadLastStateFromLocalStorage();
 
   if (persisted) {
@@ -867,13 +867,25 @@ async function loadImages() {
 
   nextDeck = buildDeck(currentIndex);
 
-  // ✅ SHOW FIRST IMAGE IMMEDIATELY (this is the whole point)
-  showImage();
-  updateGalleryTagList(); // will be "empty-ish" until tags hydrate
-  showTagging({ fromHistory: true });
-  replaceSnapshot();
+  // ✅ Decide which view to show on hard refresh
+  // (history.state is empty on reload, so we rely on persisted snapshot)
+  const startView = (persisted && persisted.v) ? persisted.v : 'tagging';
+
+  if (startView === 'gallery') {
+    // ✅ IMPORTANT: don't eager-load the main image first (it slows gallery)
+    updateGalleryTagList(); // OK even before hydrate; just "empty-ish" at first
+    showGallery({ fromHistory: true, keepFilters: true });
+    replaceSnapshot(); // keep state durable
+  } else {
+    // ✅ original fast path for tagging view
+    showImage();
+    updateGalleryTagList(); // will be "empty-ish" until tags hydrate
+    showTagging({ fromHistory: true });
+    replaceSnapshot();
+  }
 
   // ✅ Now fetch tags for the CURRENT image so the toggle icon works quickly
+  // (safe even if gallery is visible; it won't force-show the tagging view)
   hydrateTagsForOneImage(images[currentIndex]?.id);
 
   // ✅ Hydrate ALL tags in the background (gallery + counts)
@@ -883,6 +895,7 @@ async function loadImages() {
     setTimeout(hydrateAllTags, 0);
   }
 }
+
 
 async function hydrateTagsForOneImage(imageId) {
   if (!imageId) return;
