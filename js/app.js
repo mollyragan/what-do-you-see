@@ -971,6 +971,9 @@ async function hydrateAllTags() {
   // ensure current icon correct
   const cur = images[currentIndex];
   if (cur) tagToggleIcon.style.display = (cur.tags?.length ? 'block' : 'none');
+
+  deckNeedsRebuild = true;
+
 }
 
 
@@ -993,30 +996,50 @@ function showImage() {
 
 
 /* ---------- DECK / NAV ---------- */
-function buildDeck(excludeIndex = null) {
-  const weighted = [];
+// --- NAV DECK (NO REPEATS + UNTAGGED BIAS, WITHOUT MID-RUN CHANGES) ---
 
-  images.forEach((img, i) => {
-    if (excludeIndex !== null && i === excludeIndex) return;
+const UNTAGGED_RATIO = 2; // 2 untagged : 1 tagged (minimum target)
+let deckNeedsRebuild = false; // set true after tag hydration; applied only when deck empties
 
-    const tagCount = (img.tags || []).length;
-
-    if (tagCount === 0) {
-      // untagged → weight 3
-      weighted.push(i, i, i);
-    } else {
-      // tagged → weight 1
-      weighted.push(i);
-    }
-  });
-
-  return shuffleArray(weighted);
+function isUntagged(img){
+  return (img.tags?.length || 0) === 0;
 }
 
+function buildDeck(excludeIndex = null) {
+  const untagged = [];
+  const tagged = [];
+
+  for (let i = 0; i < images.length; i++) {
+    if (excludeIndex !== null && i === excludeIndex) continue;
+
+    if (isUntagged(images[i])) untagged.push(i);
+    else tagged.push(i);
+  }
+
+  const U = shuffleArray(untagged);
+  const T = shuffleArray(tagged);
+
+  // Interleave as: UU T UU T ... (no duplicates => no repeats until exhaustion)
+  const deck = [];
+  let u = 0, t = 0;
+
+  while (u < U.length || t < T.length) {
+    for (let k = 0; k < UNTAGGED_RATIO && u < U.length; k++) deck.push(U[u++]);
+    if (t < T.length) deck.push(T[t++]);
+
+    if (u >= U.length) while (t < T.length) deck.push(T[t++]);
+    if (t >= T.length) while (u < U.length) deck.push(U[u++]);
+  }
+
+  return deck;
+}
 
 function getNextIndexFromDeck() {
-  if (nextDeck.length === 0) {
+  // Only rebuild when the deck is empty (matches your existing “refill” behavior),
+  // and apply any “deckNeedsRebuild” changes only at that boundary.
+  if (nextDeck.length === 0 || deckNeedsRebuild) {
     nextDeck = buildDeck(currentIndex);
+    deckNeedsRebuild = false;
   }
   return nextDeck.shift();
 }
