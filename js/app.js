@@ -34,6 +34,9 @@ let holdSessionTagsVisible = false;
 let pendingGalleryScrollTop = null;
 let galleryScrollRAF = 0;
 
+let lastLoadToken = 0;
+
+
 
 // ✅ NEW (simplified tag system)
 // 1) A lightweight "tag index" used for gallery filtering + counts (NO positions)
@@ -180,12 +183,7 @@ function supaFullSmart(url, quality = 100) {
 function queueGalleryScrollRestore(top) {
   pendingGalleryScrollTop = Math.max(0, top || 0);
 
-  // try immediately too (sometimes content is already there)
-  requestAnimationFrame(() => {
-    if (!galleryGrid || pendingGalleryScrollTop == null) return;
-    galleryGrid.scrollTop = pendingGalleryScrollTop;
-  });
-}
+  };
 
 
 /* ---------- LAZY-LOAD FULL TAGS (positions) ---------- */
@@ -537,7 +535,7 @@ if (galleryGrid) {
 
     showTagging();
     showImage();
-  });
+      });
 
   galleryGrid.addEventListener('dragstart', (e) => {
     if (e.target.closest('#gallery-grid img')) e.preventDefault();
@@ -948,32 +946,50 @@ async function updateTagToggleIcon() {
 
 function showImage() {
   if (!images.length) return;
+
   const img = images[currentIndex];
+  const token = ++lastLoadToken;
 
-  const fullSrc = supaFullSmart(img.url);  // (next section)
-  loadIntoMain(fullSrc);
+  // ✅ prevent "previous image" flash
+  mainImage.style.visibility = 'hidden';
+  mainImage.removeAttribute('src'); // optional, but helps in some browsers
 
-  preloadNext();       // keep this
+  const fullSrc = img.url;
+  loadIntoMain(fullSrc, token);
+
+  preloadNext();
   resetPanZoom();
   resetTagDisplayForCurrentImage({ showSession: false });
   updateTagToggleIcon();
 }
 
-async function loadIntoMain(src) {
+
+async function loadIntoMain(src, token) {
   const img = new Image();
   img.decoding = "async";
-  img.fetchPriority = "high"; // supported in Chromium-based
+  img.fetchPriority = "high";
   img.src = src;
 
   try {
-    if (img.decode) await img.decode(); // wait for decode if supported
+    if (img.decode) {
+      await img.decode();
+    } else {
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+      });
+    }
   } catch {
-    // decode can fail on some browsers; ignore and swap on load
-    await new Promise(res => img.onload = res);
+    return;
   }
 
-  // now swap in (no blank flash)
+  // ✅ only latest request may swap
+  if (token !== lastLoadToken) return;
+
+  // re-assign is fine (keeps behavior consistent across browsers)
   mainImage.src = src;
+  mainImage.style.visibility = 'visible';
+
 }
 
 /* ---------- DECK / NAV ---------- */
@@ -1427,7 +1443,7 @@ function renderGallery({ preserveCols = false } = {}) {
 
     for (let k = 0; k < BATCH_SIZE && i < finalList.length; k++, i++) {
       const imgEl = document.createElement("img");
-      imgEl.src = supaThumb(finalList[i].url, 260, 347, 55);
+      imgEl.src = finalList[i].url;
       imgEl.loading = "lazy";
       imgEl.decoding = "async";
       imgEl.dataset.id = finalList[i].id;
@@ -1438,9 +1454,10 @@ function renderGallery({ preserveCols = false } = {}) {
     galleryGrid.appendChild(frag);
 
     if (pendingGalleryScrollTop != null) {
+  // try to land on it
   galleryGrid.scrollTop = pendingGalleryScrollTop;
 
-  // if scrollHeight is now big enough to "hold" that position, clear it
+  // only stop once it "sticks"
   if (galleryGrid.scrollHeight >= pendingGalleryScrollTop + galleryGrid.clientHeight) {
     pendingGalleryScrollTop = null;
   }
