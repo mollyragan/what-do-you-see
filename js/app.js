@@ -9,12 +9,12 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 /* ---------- STATE ---------- */
 let images = [];
 let currentIndex = 0;
+let preloadImg = new Image();
 
 let tagOverlay = null;
 let tagElements = [];
 let showAllTags = false;
 let sessionTagsByImageId = new Map(); // imageId -> [{ tag, xRel, yRel }]
-
 
 let selectedGalleryTags = new Set();
 
@@ -27,12 +27,21 @@ let lastPinchTime = 0;
 let galleryOrderIds = null;
 
 let allTagsPinned = false;
-let suppressTagIconHoverUntil = 0;
 const TAG_FLASH_MS = 650;
 let suppressAllTagRender = false;
-let holdSessionTagsVisible = false; // NEW: session tags stay visible while toggle is “off”
+let holdSessionTagsVisible = false;
+
+let pendingGalleryScrollTop = null;
+let galleryScrollRAF = 0;
 
 
+// ✅ NEW (simplified tag system)
+// 1) A lightweight "tag index" used for gallery filtering + counts (NO positions)
+const tagSetByImageId = new Map(); // imageId -> Set(tag)
+const globalTagCounts = new Map(); // tag -> number of images containing tag (dedup per image)
+
+// 2) A per-image cache of FULL tag rows (WITH positions), fetched lazily only when needed
+const fullTagsByImageId = new Map(); // imageId -> [{id, tag, x, y, tagger_id}]
 
 /* ✅ default view on first-ever load */
 if (!localStorage.getItem('activeView')) {
@@ -50,12 +59,8 @@ function safeLSSet(k, v) {
 }
 
 function makeClientId() {
-  // Best case: native UUID
-  if (window.crypto && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
+  if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
 
-  // iOS-safe fallback
   if (window.crypto && typeof crypto.getRandomValues === 'function') {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
@@ -66,24 +71,17 @@ function makeClientId() {
     return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
   }
 
-  // Last resort: stable string ID
   return `mbr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function getTaggerId() {
   let id = safeLSGet(TAGGER_KEY);
-
   if (!id) {
     id = makeClientId();
-
-    // Try to persist, but DO NOT depend on it
     safeLSSet(TAGGER_KEY, id);
   }
-
-  // Always return *something*
   return id;
 }
-
 
 /* ---------- HELPERS ---------- */
 function shuffleArray(arr) {
@@ -96,27 +94,32 @@ function shuffleArray(arr) {
 }
 
 function getCurrentGalleryOrderIds() {
-  // only meaningful if gallery is visible and grid has items
   if (!galleryGrid) return null;
-
   const ids = [...galleryGrid.querySelectorAll('img[data-id]')].map(el => el.dataset.id);
   return ids.length ? ids : null;
 }
 
 function resetGalleryViewport() {
-  if (galleryGrid) {
-    galleryGrid.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-  }
+  if (galleryGrid) galleryGrid.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+}
+
+function getTagSetForImageId(imageId) {
+  return tagSetByImageId.get(String(imageId)) || new Set();
+}
+
+function imageHasTag(img, tag) {
+  return getTagSetForImageId(img.id).has(String(tag || '').trim().toLowerCase());
+}
+
+function isUntagged(img) {
+  return getTagSetForImageId(img.id).size === 0;
 }
 
 function getFilteredImages() {
   if (selectedGalleryTags.size === 0) return images;
 
-  return images.filter(img =>
-    [...selectedGalleryTags].every(tag =>
-      (img.tags || []).some(t => t.tag === tag)
-    )
-  );
+  const required = [...selectedGalleryTags].map(t => String(t).trim().toLowerCase());
+  return images.filter(img => required.every(tag => imageHasTag(img, tag)));
 }
 
 function getSessionTagsForCurrentImage() {
@@ -149,13 +152,89 @@ function displaySessionTags() {
   });
 }
 
+function supaThumb(url, w = 280, h = 373, q = 60) {
+  // Convert:
+  // .../storage/v1/object/public/images/FILE.jpg
+  // to:
+  // .../storage/v1/render/image/public/images/FILE.jpg?width=...&height=...&quality=...
+  return url
+    .replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
+    + `?width=${w}&height=${h}&quality=${q}&resize=cover`;
+}
+
+function supaFull(url, w = 900, q = 75) {
+  return url
+    .replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
+    + `?width=${w}&quality=${q}`;
+}
+
+function supaFullSmart(url, quality = 100) {
+  const wrapW = imageWrapper?.clientWidth || 520;
+  const dpr = Math.min(2, window.devicePixelRatio || 1); // cap at 2 to control bytes
+  const targetW = Math.ceil(wrapW * dpr);
+
+  const w = Math.max(600, Math.min(1400, targetW)); // clamp (tweak)
+  return supaFull(url, w, quality);
+}
+
+function queueGalleryScrollRestore(top) {
+  pendingGalleryScrollTop = Math.max(0, top || 0);
+
+  // try immediately too (sometimes content is already there)
+  requestAnimationFrame(() => {
+    if (!galleryGrid || pendingGalleryScrollTop == null) return;
+    galleryGrid.scrollTop = pendingGalleryScrollTop;
+  });
+}
+
+
+/* ---------- LAZY-LOAD FULL TAGS (positions) ---------- */
+async function ensureFullTagsForImage(imageId) {
+  if (!imageId) return [];
+  const key = String(imageId);
+
+  if (fullTagsByImageId.has(key)) return fullTagsByImageId.get(key);
+
+  const { data, error } = await supabase
+    .from('image_tags')
+    .select('id, tag, x, y, tagger_id, image_id')
+    .eq('image_id', imageId);
+
+  if (error) {
+    console.error(error);
+    fullTagsByImageId.set(key, []);
+    return [];
+  }
+
+  const tags = (data || []).map(t => ({
+    id: t.id,
+    tag: t.tag,
+    x: t.x,
+    y: t.y,
+    tagger_id: t.tagger_id
+  }));
+
+  fullTagsByImageId.set(key, tags);
+
+  // keep the lightweight index in sync
+  const set = tagSetByImageId.get(key) || new Set();
+  tags.forEach(t => {
+    const norm = String(t.tag || '').trim().toLowerCase();
+    if (norm) set.add(norm);
+  });
+  tagSetByImageId.set(key, set);
+
+  return tags;
+}
+
 function displayAllPlusSessionTags() {
   const img = images[currentIndex];
   if (!img) return;
 
   const rect = imageWrapper.getBoundingClientRect();
+  const key = String(img.id);
 
-  const dbTags = (img.tags || []).map(t => ({ tag: t.tag, x: t.x, y: t.y }));
+  const dbTags = (fullTagsByImageId.get(key) || []).map(t => ({ tag: t.tag, x: t.x, y: t.y }));
   const sessionTags = getSessionTagsForCurrentImage();
 
   // dedupe by tag text + approx position
@@ -182,7 +261,7 @@ function displayAllPlusSessionTags() {
 function resetTagDisplayForCurrentImage({ showSession = false } = {}) {
   showAllTags = false;
   allTagsPinned = false;
-  holdSessionTagsVisible = false; 
+  holdSessionTagsVisible = false;
 
   clearTagElements();
   removeTagOverlay();
@@ -193,12 +272,12 @@ function resetTagDisplayForCurrentImage({ showSession = false } = {}) {
   }
 }
 
-
 /* ---------- DOM ---------- */
 const mainImage = document.getElementById('main-image');
 mainImage.decoding = "async";
 mainImage.loading = "eager";
 mainImage.setAttribute("fetchpriority", "high");
+
 const nextBtn = document.getElementById('nextBtn');
 const prevBtn = document.getElementById('prevBtn');
 const galleryBtn = document.getElementById('galleryBtn');
@@ -211,9 +290,6 @@ const galleryGrid = document.getElementById('gallery-grid');
 const galleryTagList = document.getElementById('gallery-tag-list');
 
 const tagToggleIcon = document.getElementById('tag-toggle-icon');
-
-const galleryHelpBtn = document.getElementById('galleryHelpBtn');
-const galleryHelpPopup = document.getElementById('gallery-help-popup');
 const clearBtn = document.getElementById('clearBtn');
 
 const questionBtn = document.getElementById('questionBtn');
@@ -222,60 +298,30 @@ const questionPopover = document.getElementById('question-popover');
 const LS_STATE_KEY = 'wdys:lastState';
 
 function saveLastStateToLocalStorage() {
-  try {
-    localStorage.setItem(LS_STATE_KEY, JSON.stringify(getAppStateSnapshot()));
-  } catch {}
+  try { localStorage.setItem(LS_STATE_KEY, JSON.stringify(getAppStateSnapshot())); } catch {}
 }
 
 function loadLastStateFromLocalStorage() {
   try {
     const raw = localStorage.getItem(LS_STATE_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
-/* ---------- MBR POPOVER ---------- */
-const mbrBtn = document.getElementById('mbrBtn');
-const mbrPopover = document.getElementById('mbr-popover');
-
-if (mbrBtn && mbrPopover) {
-  mbrBtn.addEventListener('click', (e) => {
-    if (window.matchMedia('(hover: none)').matches) {
-      e.stopPropagation();
-      mbrPopover.classList.toggle('open');
-    }
-  });
-
-  document.addEventListener('click', (e) => {
-    if (
-      window.matchMedia('(hover: none)').matches &&
-      mbrPopover.classList.contains('open') &&
-      !mbrPopover.contains(e.target) &&
-      !mbrBtn.contains(e.target)
-    ) {
-      mbrPopover.classList.remove('open');
-    }
-  });
-}
-
 
 /*************************************************
   BROWSER HISTORY (Back/Forward restores view/image/filter)
 *************************************************/
 let suppressHistory = false;
 
-// Build a serializable snapshot of "what user is looking at"
 function getAppStateSnapshot() {
   const view = galleryView.classList.contains('hidden') ? 'tagging' : 'gallery';
-
   return {
     v: view,
     i: images[currentIndex]?.id ?? null,
     t: [...selectedGalleryTags],
     c: galleryZoom?.cols ?? null,
-    go: getCurrentGalleryOrderIds() // ✅ new
+    go: getCurrentGalleryOrderIds(),
+    gs: galleryGrid ? galleryGrid.scrollTop : 0, // ✅ NEW: gallery scrollTop
   };
 }
 
@@ -289,7 +335,7 @@ function applyAppStateSnapshot(st) {
   galleryOrderIds = Array.isArray(st.go) ? st.go : null;
 
   if (st.v === 'gallery') {
-    showGallery({ fromHistory: true, keepFilters: true });
+    showGallery({ fromHistory: true, keepFilters: true, keepCols: true, restoreScrollTop: st.gs ?? 0 });
     saveLastStateToLocalStorage();
     return;
   }
@@ -309,23 +355,21 @@ function pushSnapshot() {
   if (suppressHistory) return;
   const st = getAppStateSnapshot();
   history.pushState(st, "", location.pathname + location.search);
-  saveLastStateToLocalStorage(); // ✅ durable
+  saveLastStateToLocalStorage();
 }
 
 function replaceSnapshot() {
   if (suppressHistory) return;
   const st = getAppStateSnapshot();
   history.replaceState(st, "", location.pathname + location.search);
-  saveLastStateToLocalStorage(); // ✅ durable
+  saveLastStateToLocalStorage();
 }
 
-// Back/Forward handler
 window.addEventListener('popstate', (e) => {
   suppressHistory = true;
   applyAppStateSnapshot(e.state);
   suppressHistory = false;
 });
-
 
 /*************************************************
   GALLERY GRID "PHOTOS-STYLE" ZOOM (GLOBAL)
@@ -339,9 +383,7 @@ const galleryZoom = {
   startCols: 3,
 };
 
-function isDesktop() {
-  return window.innerWidth >= 900;
-}
+function isDesktop() { return window.innerWidth >= 900; }
 
 function setGalleryCols(n){
   galleryZoom.cols = Math.max(galleryZoom.minCols, Math.min(galleryZoom.maxCols, n));
@@ -351,7 +393,6 @@ function setGalleryCols(n){
 function colsForFilteredCount(count){
   const n = Math.max(0, count || 0);
 
-  // 📱 MOBILE (unchanged behavior)
   if (!isDesktop()) {
     if (n <= 1) return 1;
     if (n <= 10) return 2;
@@ -360,7 +401,6 @@ function colsForFilteredCount(count){
     return 5;
   }
 
-  // 🖥️ DESKTOP (new behavior)
   if (n <= 1)  return 1;
   if (n <= 5)  return 2;
   if (n <= 10) return 3;
@@ -369,12 +409,7 @@ function colsForFilteredCount(count){
   return 10;
 }
 
-
-function setColsForImageCount(count){
-  setGalleryCols(colsForFilteredCount(count));
-}
-
-
+function setColsForImageCount(count){ setGalleryCols(colsForFilteredCount(count)); }
 
 function initGalleryCols(){
   const w = window.innerWidth;
@@ -384,8 +419,8 @@ function initGalleryCols(){
 }
 
 initGalleryCols();
+
 window.addEventListener('resize', () => {
-  // If filtered, keep the "auto fit" cols based on filtered results
   if (selectedGalleryTags.size > 0) {
     const filtered = getFilteredImages();
     setColsForImageCount(filtered.length);
@@ -404,7 +439,6 @@ window.addEventListener('orientationchange', () => {
 });
 
 if (galleryGrid) {
-  /* Smooth desktop pinch zoom (trackpad) */
   let wheelAccumulator = 0;
   const WHEEL_THRESHOLD = 10;
 
@@ -418,21 +452,17 @@ if (galleryGrid) {
     if (Math.abs(wheelAccumulator) < WHEEL_THRESHOLD) return;
 
     lastPinchTime = Date.now();
-
     const dir = wheelAccumulator > 0 ? +1 : -1;
     setGalleryCols(galleryZoom.cols + dir);
+
+    replaceSnapshot();
 
     wheelAccumulator = 0;
   }, { passive: false });
 
-  /* Pointer pinch zoom (mobile + desktop touch) */
   galleryGrid.addEventListener('pointerdown', (e) => {
     if (galleryView.classList.contains('hidden')) return;
-
-    // capture only for touch pointers
-    if (e.pointerType === 'touch') {
-      galleryGrid.setPointerCapture(e.pointerId);
-    }
+    if (e.pointerType === 'touch') galleryGrid.setPointerCapture(e.pointerId);
 
     galleryZoom.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -451,16 +481,15 @@ if (galleryGrid) {
 
     if (galleryZoom.pointers.size === 2) {
       e.preventDefault();
-
       const pts = [...galleryZoom.pointers.values()];
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       const ratio = dist / (galleryZoom.startDist || dist);
-
       const target = Math.round(galleryZoom.startCols / ratio);
       setGalleryCols(target);
-
+      replaceSnapshot();
       lastPinchTime = Date.now();
     }
+
   }, { passive: false });
 
   function endGalleryPointer(e){
@@ -470,7 +499,6 @@ if (galleryGrid) {
   galleryGrid.addEventListener('pointerup', endGalleryPointer);
   galleryGrid.addEventListener('pointercancel', endGalleryPointer);
 
-  /* iOS Safari fallback: gesture events */
   galleryGrid.addEventListener('gesturestart', (e) => {
     if (galleryView.classList.contains('hidden')) return;
     e.preventDefault();
@@ -480,9 +508,9 @@ if (galleryGrid) {
   galleryGrid.addEventListener('gesturechange', (e) => {
     if (galleryView.classList.contains('hidden')) return;
     e.preventDefault();
-
     const target = Math.round((galleryZoom._gestureStartCols || galleryZoom.cols) / e.scale);
     setGalleryCols(target);
+    replaceSnapshot();
   }, { passive: false });
 }
 
@@ -492,7 +520,6 @@ if (galleryGrid) {
   galleryGrid.addEventListener('click', (e) => {
     if (galleryView.classList.contains('hidden')) return;
 
-    // desktop: do not block clicks
     const blockWindow = isTouchDevice ? 250 : 0;
     if (Date.now() - lastPinchTime < blockWindow) return;
 
@@ -506,6 +533,7 @@ if (galleryGrid) {
     historyStack = [];
     forwardStack = [];
     nextDeck = buildDeck(currentIndex);
+    preloadNext();
 
     showTagging();
     showImage();
@@ -514,6 +542,19 @@ if (galleryGrid) {
   galleryGrid.addEventListener('dragstart', (e) => {
     if (e.target.closest('#gallery-grid img')) e.preventDefault();
   });
+}
+
+if (galleryGrid) {
+  galleryGrid.addEventListener('scroll', () => {
+    if (galleryView.classList.contains('hidden')) return;
+
+    // throttle to animation frames
+    if (galleryScrollRAF) return;
+    galleryScrollRAF = requestAnimationFrame(() => {
+      galleryScrollRAF = 0;
+      replaceSnapshot();           // ✅ updates gs in history + localStorage snapshot
+    });
+  }, { passive: true });
 }
 
 /* ---------- QUESTION POPOVER --------- */
@@ -545,10 +586,9 @@ clearBtn.addEventListener('click', () => {
   selectedGalleryTags.clear();
   updateGalleryTagList();
   renderGallery();
-  resetGalleryViewport(); // ✅
+  resetGalleryViewport();
   pushSnapshot();
 });
-
 
 /* ---------- GALLERY HELP BUTTONS (multiple) --------- */
 document.querySelectorAll('.help-anchor').forEach((anchor) => {
@@ -558,17 +598,13 @@ document.querySelectorAll('.help-anchor').forEach((anchor) => {
 
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-
-    // close all other open help popovers
     document.querySelectorAll('.js-help-popover').forEach((other) => {
       if (other !== pop) other.classList.add('hidden');
     });
-
     pop.classList.toggle('hidden');
   });
 });
 
-// click outside closes any open help popover
 document.addEventListener('click', (e) => {
   document.querySelectorAll('.help-anchor').forEach((anchor) => {
     const btn = anchor.querySelector('.js-help-btn');
@@ -579,7 +615,6 @@ document.addEventListener('click', (e) => {
     if (!clickedInside) pop.classList.add('hidden');
   });
 });
-
 
 /*************************************************
   PAN + ZOOM (tagging view)
@@ -638,11 +673,10 @@ function zoomAt(clientX, clientY, newScale){
   clampPan();
   applyTransform();
 
- if (showAllTags && !suppressAllTagRender) {
-  clearTagElements();
-  displayAllPlusSessionTags();
-}
-
+  if (showAllTags && !suppressAllTagRender) {
+    clearTagElements();
+    displayAllPlusSessionTags();
+  }
 }
 
 function wrapperPointToImageRel(clientX, clientY){
@@ -745,10 +779,9 @@ imageWrapper.addEventListener('pointermove', (e) => {
   applyTransform();
 
   if (showAllTags && !suppressAllTagRender) {
-  clearTagElements();
-  displayAllPlusSessionTags();
-}
-
+    clearTagElements();
+    displayAllPlusSessionTags();
+  }
 });
 
 imageWrapper.addEventListener('pointerup', (e) => {
@@ -816,194 +849,135 @@ imageWrapper.addEventListener('pointercancel', (e) => {
 
 imageWrapper.addEventListener('wheel', (e) => {
   e.preventDefault();
-
   const delta = -e.deltaY;
   const zoomFactor = delta > 0 ? 1.08 : 0.92;
   const target = pz.scale * zoomFactor;
-
   zoomAt(e.clientX, e.clientY, target);
 }, { passive: false });
 
-/* ---------- LOAD IMAGES ---------- */
-async function loadImages() {
-  // ✅ FAST FIRST LOAD: fetch only image rows (no join)
+/* ---------- LOAD TAG INDEX (for gallery counts + filters) ---------- */
+async function loadTagIndexAndCounts() {
+  // Simple + reliable: fetch ONLY (image_id, tag) for all rows.
+  // This is NOT "hydration for positions"; it’s a lightweight index for gallery behavior.
   const { data, error } = await supabase
-    .from('images')
-    .select('id, filename, url')
-    .order('created_at', { ascending: true });
+    .from('image_tags')
+    .select('image_id, tag');
 
   if (error) {
     console.error(error);
     return;
   }
+  
+  tagSetKnownLoaded.clear();
+  tagSetByImageId.clear();
+  globalTagCounts.clear();
 
-  // Build images array with empty tags for now
-  images = (data || []).map(img => ({ ...img, tags: [] }));
-  if (!images.length) return;
+  // build per-image sets + global counts (count per-image once)
+  const seenTagInImage = new Map(); // imageId -> Set(tag) (temp, but we keep it anyway)
 
-  // Build default nav state
-  historyStack = [];
-  forwardStack = [];
+  (data || []).forEach(r => {
+    const imageId = String(r.image_id);
+    const tag = String(r.tag || '').trim().toLowerCase();
+    if (!imageId || !tag) return;
 
-  // ✅ restore persisted state if exists
-  const persisted = loadLastStateFromLocalStorage();
+    let s = seenTagInImage.get(imageId);
+    if (!s) { s = new Set(); seenTagInImage.set(imageId, s); }
+    s.add(tag);
+  });
 
-  if (persisted) {
-    selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
-
-    if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
-    galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
-
-    if (persisted.i != null) {
-      const idx = images.findIndex(im => String(im.id) === String(persisted.i));
-      if (idx !== -1) currentIndex = idx;
-      else currentIndex = Math.floor(Math.random() * images.length);
-    } else {
-      currentIndex = Math.floor(Math.random() * images.length);
+  for (const [imageId, set] of seenTagInImage.entries()) {
+    tagSetByImageId.set(imageId, set);
+    for (const tag of set) {
+      globalTagCounts.set(tag, (globalTagCounts.get(tag) || 0) + 1);
     }
-  } else {
-    currentIndex = Math.floor(Math.random() * images.length);
   }
 
-  nextDeck = buildDeck(currentIndex);
-
-  // ✅ Decide which view to show on hard refresh
-  // (history.state is empty on reload, so we rely on persisted snapshot)
-  const startView = (persisted && persisted.v) ? persisted.v : 'tagging';
-
-  if (startView === 'gallery') {
-    // ✅ IMPORTANT: don't eager-load the main image first (it slows gallery)
-    updateGalleryTagList(); // OK even before hydrate; just "empty-ish" at first
-    showGallery({ fromHistory: true, keepFilters: true });
-    replaceSnapshot(); // keep state durable
-  } else {
-    // ✅ original fast path for tagging view
-    showImage();
-    updateGalleryTagList(); // will be "empty-ish" until tags hydrate
-    showTagging({ fromHistory: true });
-    replaceSnapshot();
-  }
-
-  // ✅ Now fetch tags for the CURRENT image so the toggle icon works quickly
-  // (safe even if gallery is visible; it won't force-show the tagging view)
-  hydrateTagsForOneImage(images[currentIndex]?.id);
-
-  // ✅ Hydrate ALL tags in the background (gallery + counts)
-  if ("requestIdleCallback" in window) {
-    requestIdleCallback(hydrateAllTags);
-  } else {
-    setTimeout(hydrateAllTags, 0);
-  }
-}
-
-
-async function hydrateTagsForOneImage(imageId) {
-  if (!imageId) return;
-
-  const { data, error } = await supabase
-    .from('image_tags')
-    .select('id, tag, x, y, tagger_id, image_id')
-    .eq('image_id', imageId);
-
-  if (error) {
-    console.error(error);
-    return;
-  }
-
-  const idx = images.findIndex(im => String(im.id) === String(imageId));
-  if (idx === -1) return;
-
-  images[idx].tags = (data || []).map(t => ({
-    id: t.id,
-    tag: t.tag,
-    x: t.x,
-    y: t.y,
-    tagger_id: t.tagger_id
-  }));
-
-  // refresh icon + (if tags currently visible) redraw them
-  if (idx === currentIndex) {
-    tagToggleIcon.style.display = images[idx].tags.length ? 'block' : 'none';
-    if (showAllTags && !suppressAllTagRender) {
-  clearTagElements();
-  displayAllPlusSessionTags();
-}
-  }
-}
-
-async function hydrateAllTags() {
-  const { data, error } = await supabase
-    .from('image_tags')
-    .select('id, tag, x, y, tagger_id, image_id');
-
-  if (error) {
-    console.error(error);
-    return;
-  }
-
-  // group tags by image_id
-  const byImage = new Map();
-  (data || []).forEach(t => {
-    const key = String(t.image_id);
-    if (!byImage.has(key)) byImage.set(key, []);
-    byImage.get(key).push({
-      id: t.id,
-      tag: t.tag,
-      x: t.x,
-      y: t.y,
-      tagger_id: t.tagger_id
-    });
-  });
-
-  // merge into images[]
-  images.forEach(img => {
-    img.tags = byImage.get(String(img.id)) || img.tags || [];
-  });
-
-  // now tag list + counts become accurate
+  // update icon for current image + update gallery lists/render
+await updateTagToggleIcon();
   updateGalleryTagList();
 
-  // if user is in gallery, rerender
   if (!galleryView.classList.contains('hidden')) {
     renderGallery();
   }
+}
 
-  // ensure current icon correct
-  const cur = images[currentIndex];
-  if (cur) tagToggleIcon.style.display = (cur.tags?.length ? 'block' : 'none');
+// ---------- PER-IMAGE TAGSET HYDRATION (fixes intermittent toggle icon) ----------
+const tagSetKnownLoaded = new Set(); // imageId strings we've checked at least once
 
-  deckNeedsRebuild = true;
+async function ensureTagSetForImage(imageId) {
+  const key = String(imageId);
+  if (tagSetKnownLoaded.has(key)) return tagSetByImageId.get(key) || new Set();
 
+  const { data, error } = await supabase
+    .from('image_tags')
+    .select('tag')
+    .eq('image_id', imageId);
+
+  if (error) {
+    console.error('ensureTagSetForImage error:', error);
+    return tagSetByImageId.get(key) || new Set();
+  }
+
+  const set = new Set();
+  (data || []).forEach(r => {
+    const t = String(r.tag || '').trim().toLowerCase();
+    if (t) set.add(t);
+  });
+
+  tagSetByImageId.set(key, set);
+  tagSetKnownLoaded.add(key);
+
+  return set;
+}
+
+/* ---------- SHOW IMAGE ---------- */
+async function updateTagToggleIcon() {
+  const img = images[currentIndex];
+  if (!img) return;
+
+  // Use index if present; otherwise hydrate this image once.
+  let set = tagSetByImageId.get(String(img.id));
+
+  if (!set) {
+    set = await ensureTagSetForImage(img.id);
+  }
+
+  tagToggleIcon.style.display = (set && set.size > 0) ? 'block' : 'none';
 }
 
 
-/* ---------- SHOW IMAGE ---------- */
 function showImage() {
   if (!images.length) return;
   const img = images[currentIndex];
 
-  mainImage.removeAttribute("src");
-  mainImage.src = img.url;
+  const fullSrc = supaFullSmart(img.url);  // (next section)
+  loadIntoMain(fullSrc);
 
+  preloadNext();       // keep this
   resetPanZoom();
-
-  // OFF means nothing visible
   resetTagDisplayForCurrentImage({ showSession: false });
-
-  tagToggleIcon.style.display = (img.tags && img.tags.length) ? 'block' : 'none';
+  updateTagToggleIcon();
 }
 
+async function loadIntoMain(src) {
+  const img = new Image();
+  img.decoding = "async";
+  img.fetchPriority = "high"; // supported in Chromium-based
+  img.src = src;
 
+  try {
+    if (img.decode) await img.decode(); // wait for decode if supported
+  } catch {
+    // decode can fail on some browsers; ignore and swap on load
+    await new Promise(res => img.onload = res);
+  }
+
+  // now swap in (no blank flash)
+  mainImage.src = src;
+}
 
 /* ---------- DECK / NAV ---------- */
-// --- NAV DECK (NO REPEATS + UNTAGGED BIAS, WITHOUT MID-RUN CHANGES) ---
-
-const UNTAGGED_RATIO = 2; // 2 untagged : 1 tagged (minimum target)
-let deckNeedsRebuild = false; // set true after tag hydration; applied only when deck empties
-
-function isUntagged(img){
-  return (img.tags?.length || 0) === 0;
-}
+const UNTAGGED_RATIO = 2;
 
 function buildDeck(excludeIndex = null) {
   const untagged = [];
@@ -1011,7 +985,6 @@ function buildDeck(excludeIndex = null) {
 
   for (let i = 0; i < images.length; i++) {
     if (excludeIndex !== null && i === excludeIndex) continue;
-
     if (isUntagged(images[i])) untagged.push(i);
     else tagged.push(i);
   }
@@ -1019,7 +992,6 @@ function buildDeck(excludeIndex = null) {
   const U = shuffleArray(untagged);
   const T = shuffleArray(tagged);
 
-  // Interleave as: UU T UU T ... (no duplicates => no repeats until exhaustion)
   const deck = [];
   let u = 0, t = 0;
 
@@ -1035,19 +1007,28 @@ function buildDeck(excludeIndex = null) {
 }
 
 function getNextIndexFromDeck() {
-  // Only rebuild when the deck is empty (matches your existing “refill” behavior),
-  // and apply any “deckNeedsRebuild” changes only at that boundary.
-  if (nextDeck.length === 0 || deckNeedsRebuild) {
-    nextDeck = buildDeck(currentIndex);
-    deckNeedsRebuild = false;
-  }
+  if (nextDeck.length === 0) nextDeck = buildDeck(currentIndex);
   return nextDeck.shift();
 }
+
+function preloadNext() {
+  if (!images.length) return;
+
+  const nextIdx = (forwardStack.length > 0)
+    ? forwardStack[forwardStack.length - 1]
+    : (nextDeck.length ? nextDeck[0] : null);
+
+  if (nextIdx == null) return;
+
+  const url = supaFull(images[nextIdx].url, 1100, 75);
+  preloadImg.decoding = "async";
+  preloadImg.src = url;
+}
+
 
 function goNextImage() {
   if (!images.length) return;
 
-  // If the user previously went backward, "next" should replay forward history first
   if (forwardStack.length > 0) {
     historyStack.push(currentIndex);
     currentIndex = forwardStack.pop();
@@ -1056,7 +1037,6 @@ function goNextImage() {
     return;
   }
 
-  // Otherwise, continue random navigation
   historyStack.push(currentIndex);
   currentIndex = getNextIndexFromDeck();
   showImage();
@@ -1070,7 +1050,7 @@ function goPrevImage() {
   forwardStack.push(currentIndex);
   currentIndex = historyStack.pop();
   showImage();
-  pushSnapshot(); // ✅
+  pushSnapshot();
 }
 
 /* ---------- TAG ELEMENTS ---------- */
@@ -1167,10 +1147,9 @@ function createTagOverlay(xPx, yPx) {
     if (!tagText) return;
 
     const img = images[currentIndex];
-    const alreadyExists = (img.tags || []).some(
-      t => String(t.tag || '').trim().toLowerCase() === tagText
-    );
 
+    // ✅ same "already exists" behavior (works via index even before full tags are fetched)
+    const alreadyExists = getTagSetForImageId(img.id).has(tagText);
     if (alreadyExists) {
       showTagError('tag already exists', xPx, yPx);
       removeTagOverlay();
@@ -1183,43 +1162,36 @@ function createTagOverlay(xPx, yPx) {
     const xRel = ix / wrap.width;
     const yRel = iy / wrap.height;
 
-    // ✅ remember what the user was seeing at the moment they hit Enter
-    const wasShowingAll = showAllTags || allTagsPinned;
-
     tagToggleIcon.style.display = 'block';
 
-    // lock rendering while saving
-suppressAllTagRender = true;
+    suppressAllTagRender = true;
 
-await saveTag(tagText, xRel, yRel);
-saved = true;
+    await saveTag(tagText, xRel, yRel);
+    saved = true;
 
-// record session tag
-const imgId = String(images[currentIndex].id);
-const list = sessionTagsByImageId.get(imgId) || [];
-list.push({ tag: tagText, x: xRel, y: yRel });
-sessionTagsByImageId.set(imgId, list);
+    // record session tag
+    const imgId = String(images[currentIndex].id);
+    const list = sessionTagsByImageId.get(imgId) || [];
+    list.push({ tag: tagText, x: xRel, y: yRel });
+    sessionTagsByImageId.set(imgId, list);
 
-// now render based on pinned state
-clearTagElements();
+    clearTagElements();
 
-if (allTagsPinned) {
-  // toggle ON (pinned): show everything
-  showAllTags = true;
-  displayAllPlusSessionTags();
-  holdSessionTagsVisible = false;
-} else {
-  // toggle OFF: show session tags and KEEP them visible
-  showAllTags = false;
-  holdSessionTagsVisible = true;
-  displaySessionTags();
-}
+    if (allTagsPinned) {
+      showAllTags = true;
+      // if pinned, ensure full tags exist then show all
+      await ensureFullTagsForImage(images[currentIndex].id);
+      displayAllPlusSessionTags();
+      holdSessionTagsVisible = false;
+    } else {
+      showAllTags = false;
+      holdSessionTagsVisible = true;
+      displaySessionTags();
+    }
 
-requestAnimationFrame(() => {
-  suppressAllTagRender = false;
-});
-
-
+    requestAnimationFrame(() => {
+      suppressAllTagRender = false;
+    });
   }
 
   tagOverlay.addEventListener('keydown', async (e) => {
@@ -1237,10 +1209,7 @@ requestAnimationFrame(() => {
   });
 
   tagOverlay.addEventListener('click', (e) => e.stopPropagation());
-
-  tagOverlay.addEventListener('blur', () => {
-    removeTagOverlay();
-  });
+  tagOverlay.addEventListener('blur', () => removeTagOverlay());
 }
 
 function removeTagOverlay() {
@@ -1320,8 +1289,6 @@ function findNonOverlappingPosition(el, startLeft, startTop, wrapRect, others, s
 async function saveTag(tag, x, y) {
   const img = images[currentIndex];
 
-  const tagger_id = getTaggerId();
-
   const { data, error } = await supabase
     .from('image_tags')
     .insert([{
@@ -1335,7 +1302,6 @@ async function saveTag(tag, x, y) {
     .select('id, tag, x, y, tagger_id')
     .single();
 
-
   if (error) {
     if (error.code === '23505') return;
     console.error('saveTag error:', error);
@@ -1344,42 +1310,40 @@ async function saveTag(tag, x, y) {
 
   if (!data) return;
 
-  img.tags = img.tags || [];
-  img.tags.push(data);
+  // ✅ keep BOTH caches in sync (index + full-tags-if-present)
+  const imgId = String(img.id);
+  const norm = String(data.tag || '').trim().toLowerCase();
+
+  // lightweight index
+  let set = tagSetByImageId.get(imgId);
+  if (!set) { set = new Set(); tagSetByImageId.set(imgId, set); }
+  const wasNewForImage = !set.has(norm);
+  set.add(norm);
+
+  // global counts (count per-image once)
+  if (wasNewForImage) {
+    globalTagCounts.set(norm, (globalTagCounts.get(norm) || 0) + 1);
+  }
+
+  // full tag cache (if it exists for this image, push; otherwise leave it lazy)
+  if (fullTagsByImageId.has(imgId)) {
+    const arr = fullTagsByImageId.get(imgId) || [];
+    arr.push(data);
+    fullTagsByImageId.set(imgId, arr);
+  }
 
   tagToggleIcon.style.display = 'block';
   renderGallery();
   updateGalleryTagList();
 }
 
-/* ---------- DISPLAY EXISTING TAGS ---------- */
-function displayImageTags() {
-  const img = images[currentIndex];
-  const rect = imageWrapper.getBoundingClientRect();
-
-  const list = (img.tags || []); // ✅ always all tags (no mine vs all)
-
-  list.forEach(t => {
-    const baseX = t.x * rect.width;
-    const baseY = t.y * rect.height;
-
-    const xPx = baseX * pz.scale + pz.x;
-    const yPx = baseY * pz.scale + pz.y;
-
-    createTagElement(t.tag, xPx, yPx);
-  });
-}
-
-
 /* ---------- TAG TOGGLE ICON (CLICK) ---------- */
-tagToggleIcon.addEventListener('click', (e) => {
+tagToggleIcon.addEventListener('click', async (e) => {
   e.stopPropagation();
 
   // If pinned → clicking turns OFF and hides EVERYTHING
   if (allTagsPinned) {
-    // ✅ END THE SESSION for this image
-    clearSessionTagsForCurrentImage();   // <--- ADD THIS
-
+    clearSessionTagsForCurrentImage();
     holdSessionTagsVisible = false;
     resetTagDisplayForCurrentImage({ showSession: false });
     return;
@@ -1390,158 +1354,143 @@ tagToggleIcon.addEventListener('click', (e) => {
   allTagsPinned = true;
   showAllTags = true;
 
+  // ✅ Lazy-load full tags only now
+  await ensureFullTagsForImage(images[currentIndex]?.id);
+
   clearTagElements();
   displayAllPlusSessionTags();
 });
 
-
-
 /* ---------- TAG TOGGLE ICON (DESKTOP HOVER PREVIEW) ---------- */
 if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
-  tagToggleIcon.addEventListener('mouseenter', () => {
-    if (allTagsPinned) return;           // ✅ do not override pinned state
+  tagToggleIcon.addEventListener('mouseenter', async () => {
+    if (allTagsPinned) return;
     if (suppressAllTagRender) return;
 
     showAllTags = true;
+
+    // ✅ Lazy-load full tags for hover preview
+    await ensureFullTagsForImage(images[currentIndex]?.id);
+
     clearTagElements();
     displayAllPlusSessionTags();
   });
 
-tagToggleIcon.addEventListener('mouseleave', () => {
-  if (allTagsPinned) return;
-  if (suppressAllTagRender) return;
+  tagToggleIcon.addEventListener('mouseleave', () => {
+    if (allTagsPinned) return;
+    if (suppressAllTagRender) return;
 
-  showAllTags = false;
-  clearTagElements();     // hide ALL tags (including session)
-});
+    showAllTags = false;
+    clearTagElements(); // hide ALL tags (including session)
+  });
 }
 
-
-
 /* ---------- GALLERY ---------- */
-function renderGallery() {
+function renderGallery({ preserveCols = false } = {}) {
   let filtered = images;
   const isFiltered = selectedGalleryTags.size > 0;
 
   if (isFiltered) {
-    filtered = images.filter(img =>
-      [...selectedGalleryTags].every(tag =>
-        (img.tags || []).some(t => t.tag === tag)
-      )
-    );
-
+    filtered = getFilteredImages();
     setColsForImageCount(filtered.length);
   } else {
-    initGalleryCols();
+    if (!preserveCols) initGalleryCols();  // ✅ ONLY reset if NOT preserving
   }
 
   galleryGrid.classList.toggle('single-image', filtered.length === 1);
 
-let finalList = filtered;
+  let finalList = filtered;
 
-// ✅ If we have a saved order, reuse it (no reshuffle)
-if (Array.isArray(galleryOrderIds) && galleryOrderIds.length) {
-  const byId = new Map(finalList.map(img => [String(img.id), img]));
-  const ordered = [];
+  if (Array.isArray(galleryOrderIds) && galleryOrderIds.length) {
+    const byId = new Map(finalList.map(img => [String(img.id), img]));
+    const ordered = [];
 
-  galleryOrderIds.forEach(id => {
-    const img = byId.get(String(id));
-    if (img) ordered.push(img);
-    byId.delete(String(id));
-  });
+    galleryOrderIds.forEach(id => {
+      const img = byId.get(String(id));
+      if (img) ordered.push(img);
+      byId.delete(String(id));
+    });
 
-  for (const img of byId.values()) ordered.push(img);
-
-  finalList = ordered;
-} else {
-  finalList = shuffleArray(finalList);
-}
-
-// Clear existing grid
-galleryGrid.innerHTML = "";
-
-// Batch-render images to avoid creating/decoding hundreds at once
-const BATCH_SIZE = 60;   // tweak: 30–80 is typical
-let i = 0;
-
-function appendBatch() {
-  const frag = document.createDocumentFragment();
-
-  for (let k = 0; k < BATCH_SIZE && i < finalList.length; k++, i++) {
-    const imgEl = document.createElement("img");
-    imgEl.src = finalList[i].url;
-    imgEl.loading = "lazy";
-    imgEl.decoding = "async";            // ✅ helps reduce jank
-    imgEl.dataset.id = finalList[i].id;
-    imgEl.draggable = false;
-
-    frag.appendChild(imgEl);
+    for (const img of byId.values()) ordered.push(img);
+    finalList = ordered;
+  } else {
+    finalList = shuffleArray(finalList);
   }
 
-  galleryGrid.appendChild(frag);
+  galleryGrid.innerHTML = "";
 
-  // If more images remain, schedule the next batch when the browser is idle-ish
-  if (i < finalList.length) {
-    if ("requestIdleCallback" in window) requestIdleCallback(appendBatch);
-    else setTimeout(appendBatch, 16);
+  const BATCH_SIZE = 60;
+  let i = 0;
+
+  function appendBatch() {
+    const frag = document.createDocumentFragment();
+
+    for (let k = 0; k < BATCH_SIZE && i < finalList.length; k++, i++) {
+      const imgEl = document.createElement("img");
+      imgEl.src = supaThumb(finalList[i].url, 260, 347, 55);
+      imgEl.loading = "lazy";
+      imgEl.decoding = "async";
+      imgEl.dataset.id = finalList[i].id;
+      imgEl.draggable = false;
+      frag.appendChild(imgEl);
+    }
+
+    galleryGrid.appendChild(frag);
+
+    if (pendingGalleryScrollTop != null) {
+  galleryGrid.scrollTop = pendingGalleryScrollTop;
+
+  // if scrollHeight is now big enough to "hold" that position, clear it
+  if (galleryGrid.scrollHeight >= pendingGalleryScrollTop + galleryGrid.clientHeight) {
+    pendingGalleryScrollTop = null;
   }
 }
+    if (i < finalList.length) {
+      if ("requestIdleCallback" in window) requestIdleCallback(appendBatch);
+      else setTimeout(appendBatch, 16);
+    }
+  }
 
-appendBatch();
-
-
+  appendBatch();
 }
 
 /* ---------- GALLERY TAG LIST ---------- */
 function updateGalleryTagList() {
-  // 1) GLOBAL counts + stable sort order
-  const globalStats = new Map();
-
+  // 1) stable sort order: by global count desc, then first-seen (from images order)
+  const firstSeenAt = new Map(); // tag -> number
   images.forEach((img, imgIndex) => {
-    (img.tags || []).forEach((t, tagIndex) => {
-      const tag = String(t.tag || '').trim().toLowerCase();
-      if (!tag) return;
-
-      if (!globalStats.has(tag)) {
-        globalStats.set(tag, { count: 0, firstSeenAt: imgIndex * 100000 + tagIndex });
-      }
-      globalStats.get(tag).count += 1;
-    });
+    const set = getTagSetForImageId(img.id);
+    for (const tag of set) {
+      if (!firstSeenAt.has(tag)) firstSeenAt.set(tag, imgIndex);
+    }
   });
 
-  const allTagsSorted = [...globalStats.entries()]
+  const allTagsSorted = [...globalTagCounts.entries()]
     .sort((a, b) => {
-      const A = a[1], B = b[1];
-      if (B.count !== A.count) return B.count - A.count;
-      return A.firstSeenAt - B.firstSeenAt;
+      const [tagA, countA] = a;
+      const [tagB, countB] = b;
+      if (countB !== countA) return countB - countA;
+      return (firstSeenAt.get(tagA) ?? 1e9) - (firstSeenAt.get(tagB) ?? 1e9);
     })
     .map(([tag]) => tag);
 
-  // 2) Determine current "matching set" based on selected tags
-  const selected = [...selectedGalleryTags];
+  // 2) matching set based on selected tags
+  const selected = [...selectedGalleryTags].map(t => String(t).trim().toLowerCase());
 
-  const matchingImages = selected.length === 0
+  const matchingImages = (selected.length === 0)
     ? images
-    : images.filter(img =>
-        selected.every(tag => (img.tags || []).some(t => t.tag === tag))
-      );
+    : images.filter(img => selected.every(tag => imageHasTag(img, tag)));
 
-  // 3) For responsiveness: counts within matching set
-  const matchingCounts = new Map(); // tag -> count within matchingImages
+  // 3) counts within matching set (per-image once)
+  const matchingCounts = new Map();
   matchingImages.forEach(img => {
-    const seenInThisImage = new Set();
-    (img.tags || []).forEach(t => {
-      const tag = String(t.tag || '').trim().toLowerCase();
-      if (!tag) return;
-      // count per-image once (avoid double-count if duplicates ever exist)
-      if (seenInThisImage.has(tag)) return;
-      seenInThisImage.add(tag);
-
+    const set = getTagSetForImageId(img.id);
+    for (const tag of set) {
       matchingCounts.set(tag, (matchingCounts.get(tag) || 0) + 1);
-    });
+    }
   });
 
-  // 4) compatibility set (same as before)
+  // 4) compatibility set
   const compatible = new Set(matchingCounts.keys());
 
   // 5) render list with counts
@@ -1554,13 +1503,8 @@ function updateGalleryTagList() {
       (!isSelected && selected.length > 0 && !isCompatible) ? 'disabled' : ''
     ].filter(Boolean).join(' ');
 
-    const globalCount = globalStats.get(tag)?.count || 0;
-
-    // if there are active filters, show count within current matching set,
-    // otherwise show global count
-    const displayCount = (selected.length > 0)
-      ? (matchingCounts.get(tag) || 0)
-      : globalCount;
+    const globalCount = globalTagCounts.get(tag) || 0;
+    const displayCount = (selected.length > 0) ? (matchingCounts.get(tag) || 0) : globalCount;
 
     return `<li class="${classes}" data-tag="${tag}">${tag} <span class="tag-count">(${displayCount})</span></li>`;
   }).join('');
@@ -1579,12 +1523,12 @@ function updateGalleryTagList() {
       const after = [...selectedGalleryTags].sort().join('|');
       const filterChanged = before !== after;
 
-      galleryOrderIds = null; // reset order for new filter state
+      galleryOrderIds = null;
 
       updateGalleryTagList();
       renderGallery();
 
-      if (filterChanged) resetGalleryViewport(); // ✅ reset cols + scroll
+      if (filterChanged) resetGalleryViewport();
 
       pushSnapshot();
     });
@@ -1594,7 +1538,6 @@ function updateGalleryTagList() {
 function scrollSelectedTagIntoView(desktopOffsetItems = 2) {
   if (!galleryTagList) return;
 
-  // wait for: view swap + UL innerHTML update + layout
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       const selectedEl = galleryTagList.querySelector('li.selected');
@@ -1605,32 +1548,19 @@ function scrollSelectedTagIntoView(desktopOffsetItems = 2) {
       const canScrollX = scroller.scrollWidth > scroller.clientWidth;
       const canScrollY = scroller.scrollHeight > scroller.clientHeight;
 
-      // MOBILE: horizontal scrolling (wrapped columns)
-      // Goal: bring the selected tag's *column* to the far left (no offset)
       if (canScrollX && !canScrollY) {
-        // In a column-wrapped flex scroller, offsetLeft is effectively the column's x-position.
-        // So just align that column to the left edge.
         const targetLeft = selectedEl.offsetLeft;
-
-        scroller.scrollTo({
-          left: Math.max(0, targetLeft),
-          behavior: 'auto'
-        });
+        scroller.scrollTo({ left: Math.max(0, targetLeft), behavior: 'auto' });
         return;
       }
 
-      // DESKTOP: vertical list (keep your nice "2 rows above" behavior)
       const itemH = selectedEl.offsetHeight || 0;
       const targetTop = selectedEl.offsetTop - itemH * desktopOffsetItems;
 
-      scroller.scrollTo({
-        top: Math.max(0, targetTop),
-        behavior: 'auto'
-      });
+      scroller.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' });
     });
   });
 }
-
 
 /* ---------- SHOW/HIDE VIEWS ---------- */
 function setActiveView(view) {
@@ -1639,42 +1569,42 @@ function setActiveView(view) {
 }
 
 function showGallery(opts = {}) {
-  setActiveView('gallery'); 
+  setActiveView('gallery');
   taggingView.classList.add('hidden');
   galleryView.classList.remove('hidden');
 
   if (!opts.keepFilters) {
     selectedGalleryTags.clear();
-    galleryOrderIds = null; // ✅ reset order
+    galleryOrderIds = null;
   }
-
 
   updateGalleryTagList();
 
   clearTagElements();
   removeTagOverlay();
 
-  // ✅ if filters exist, keep whatever cols we already have;
-  // otherwise initialize default cols
-  if (selectedGalleryTags.size === 0) initGalleryCols();
+  if (selectedGalleryTags.size === 0 && !opts.keepCols) initGalleryCols();
 
   galleryGrid.classList.remove('single-image');
-  renderGallery();
+  renderGallery({ preserveCols: !!opts.keepCols });
 
-  // ✅ history
+
+  if (typeof opts.restoreScrollTop === 'number') {
+    queueGalleryScrollRestore(opts.restoreScrollTop);
+  }
+
   if (!opts.fromHistory) pushSnapshot();
   else replaceSnapshot();
 }
 
 function showTagging(opts = {}) {
-  setActiveView('tagging');    
+  setActiveView('tagging');
   galleryView.classList.add('hidden');
   taggingView.classList.remove('hidden');
 
   clearTagElements();
   removeTagOverlay();
 
-  // ✅ history
   if (!opts.fromHistory) pushSnapshot();
   else replaceSnapshot();
 }
@@ -1683,11 +1613,11 @@ function goToGalleryFilteredByTag(tag) {
   setActiveView('gallery');
 
   selectedGalleryTags.clear();
-  selectedGalleryTags.add(tag);
+  selectedGalleryTags.add(String(tag || '').trim().toLowerCase());
 
   if (showAllTags) {
-  clearTagElements();
-  displayImageTags();
+    clearTagElements();
+    // (kept as-is in your original: displayImageTags existed; here we just clear, behavior is unchanged visually)
   }
 
   clearTagElements();
@@ -1715,6 +1645,61 @@ if (prevBtn) {
 }
 
 galleryBtn.addEventListener('click', showGallery);
+
+/* ---------- LOAD IMAGES ---------- */
+async function loadImages() {
+  const { data, error } = await supabase
+    .from('images')
+    .select('id, filename, url')
+    .order('created_at', { ascending: true });
+
+  if (error) { console.error(error); return; }
+
+  images = (data || []).map(img => ({ ...img }));
+  if (!images.length) return;
+
+  historyStack = [];
+  forwardStack = [];
+
+  const persisted = loadLastStateFromLocalStorage();
+
+  if (persisted) {
+    selectedGalleryTags = new Set(Array.isArray(persisted.t) ? persisted.t : []);
+    if (typeof persisted.c === 'number') setGalleryCols(persisted.c);
+    galleryOrderIds = Array.isArray(persisted.go) ? persisted.go : null;
+
+    if (persisted.i != null) {
+      const idx = images.findIndex(im => String(im.id) === String(persisted.i));
+      currentIndex = (idx !== -1) ? idx : Math.floor(Math.random() * images.length);
+    } else {
+      currentIndex = Math.floor(Math.random() * images.length);
+    }
+  } else {
+    currentIndex = Math.floor(Math.random() * images.length);
+  }
+
+  nextDeck = buildDeck(currentIndex);
+
+  const startView = (persisted && persisted.v) ? persisted.v : 'tagging';
+
+  // 1) Show a view immediately (so UI isn’t blank)
+  if (startView === 'gallery') {
+    showGallery({ fromHistory: true, keepFilters: true });
+  } else {
+    showTagging({ fromHistory: true });
+    showImage();
+  }
+  replaceSnapshot();
+
+  // 2) ALWAYS load tag index, then render tag list + gallery using real data
+  await loadTagIndexAndCounts();
+
+  // Ensure UI updates after tags arrive
+  updateGalleryTagList();
+  if (!galleryView.classList.contains('hidden')) renderGallery();
+  updateTagToggleIcon();
+}
+
 
 /* ---------- INIT ---------- */
 loadImages();
