@@ -403,7 +403,8 @@ function colsForFilteredCount(count){
   if (n <= 5)  return 2;
   if (n <= 10) return 3;
   if (n <= 15) return 4;
-  if (n <= 20) return 5;
+  if (n <= 40) return 5;
+  if (n <= 70) return 6;
   return 10;
 }
 
@@ -857,13 +858,27 @@ imageWrapper.addEventListener('wheel', (e) => {
 async function loadTagIndexAndCounts() {
   // Simple + reliable: fetch ONLY (image_id, tag) for all rows.
   // This is NOT "hydration for positions"; it’s a lightweight index for gallery behavior.
-  const { data, error } = await supabase
-    .from('image_tags')
-    .select('image_id, tag');
+  const pageSize = 1000;
+  const data = [];
+  let from = 0;
 
-  if (error) {
-    console.error(error);
-    return;
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data: page, error } = await supabase
+      .from('image_tags')
+      .select('image_id, tag')
+      .range(from, to);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    if (!page || page.length === 0) break;
+    data.push(...page);
+
+    if (page.length < pageSize) break;
+    from += pageSize;
   }
   
   tagSetKnownLoaded.clear();
@@ -1473,6 +1488,8 @@ function renderGallery({ preserveCols = false } = {}) {
 
 /* ---------- GALLERY TAG LIST ---------- */
 function updateGalleryTagList() {
+  galleryTagList.classList.toggle('has-selection', selectedGalleryTags.size > 0);
+
   // 1) stable sort order: by global count desc, then first-seen (from images order)
   const firstSeenAt = new Map(); // tag -> number
   images.forEach((img, imgIndex) => {
@@ -1516,37 +1533,35 @@ function updateGalleryTagList() {
     const isCompatible = compatible.has(tag);
 
     const classes = [
-      isSelected ? 'selected' : '',
-      (!isSelected && selected.length > 0 && !isCompatible) ? 'disabled' : ''
-    ].filter(Boolean).join(' ');
+      isSelected ? "selected" : "",
+      !isCompatible ? "incompatible" : ""
+    ].filter(Boolean).join(" ");
 
-    const globalCount = globalTagCounts.get(tag) || 0;
-    const displayCount = (selected.length > 0) ? (matchingCounts.get(tag) || 0) : globalCount;
+    const count = matchingCounts.get(tag) || 0;
 
-    return `<li class="${classes}" data-tag="${tag}">${tag} <span class="tag-count">(${displayCount})</span></li>`;
-  }).join('');
+    return `
+      <li class="${classes}" data-tag="${tag}">
+        <span class="tag-name">${tag}</span>
+        <span class="tag-count">(${count})</span>
+      </li>
+    `;
+  }).join("");
 
-  // 6) click handlers
-  galleryTagList.querySelectorAll('li').forEach((li) => {
-    li.addEventListener('click', () => {
-      if (li.classList.contains('disabled')) return;
-
+  // 6) attach click handlers
+  galleryTagList.querySelectorAll("li").forEach(li => {
+    li.addEventListener("click", () => {
       const tag = li.dataset.tag;
-      const before = [...selectedGalleryTags].sort().join('|');
 
-      if (selectedGalleryTags.has(tag)) selectedGalleryTags.delete(tag);
-      else selectedGalleryTags.add(tag);
-
-      const after = [...selectedGalleryTags].sort().join('|');
-      const filterChanged = before !== after;
+      if (selectedGalleryTags.has(tag)) {
+        selectedGalleryTags.delete(tag);
+      } else {
+        selectedGalleryTags.add(tag);
+      }
 
       galleryOrderIds = null;
-
       updateGalleryTagList();
       renderGallery();
-
-      if (filterChanged) resetGalleryViewport();
-
+      resetGalleryViewport();
       pushSnapshot();
     });
   });

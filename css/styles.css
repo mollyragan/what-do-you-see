@@ -298,8 +298,21 @@ button{
   color: black;
 }
 
+#gallery-tag-list li{
+  color: #000000;
+}
+
+#gallery-tag-list.has-selection li:not(.selected){
+  color: #777;
+}
+
 @media (hover: hover) and (pointer: fine){
   #gallery-tag-list li:hover{
+    font-weight: 700;
+    color: black;
+  }
+
+  #gallery-tag-list.has-selection li:not(.selected):hover{
     font-weight: 700;
     color: black;
   }
@@ -698,7 +711,7 @@ button{
     margin: 0 0 2px 0;
     text-align: left;
     font-weight: 400;
-    color: black;
+    color: #000000;
   }
 
   .help-popover{
