@@ -184,8 +184,9 @@ let suppressHistory = false;
 
 function getAppStateSnapshot() {
   return {
-    v:  galleryView.classList.contains('hidden') ? 'tagging' : 'gallery',
-    i:  images[currentIndex]?.id ?? null,
+    v:   galleryView.classList.contains('hidden') ? 'tagging' : 'gallery',
+    i:   images[currentIndex]?.id ?? null,
+    url: images[currentIndex]?.url ?? null,
     t:  [...selectedGalleryTags],
     c:  galleryZoom?.cols ?? null,
     go: getCurrentGalleryOrderIds(),
@@ -1134,6 +1135,13 @@ function showImage() {
 }
 
 async function loadIntoMain(src, token) {
+  if (preloadImg.src === src && preloadImg.complete && preloadImg.naturalWidth > 0) {
+    if (token !== lastLoadToken) return;
+    mainImage.src = src;
+    mainImage.style.visibility = 'visible';
+    return;
+  }
+
   const img = new Image();
   img.decoding      = 'async';
   img.fetchPriority = 'high';
@@ -1528,6 +1536,12 @@ function shuffleArray(arr) {
    ========================================================= */
 
 async function loadImages() {
+  // Start loading the last-seen image immediately, before Supabase responds
+  const persistedEarly = loadLastStateFromLocalStorage();
+  if (persistedEarly?.url) {
+    preloadImg.src = supaFullSmart(persistedEarly.url, 85);
+  }
+
   const { data, error } = await supabase
     .from('images')
     .select('id, filename, url')
@@ -1560,16 +1574,16 @@ async function loadImages() {
 
   nextDeck = buildDeck(currentIndex);
 
+  // Kick off preload of the first image immediately
+  preloadImg.src = supaFullSmart(images[currentIndex].url, 85);
+
   // Always open on tagging view regardless of last session
   showTagging({ fromHistory: true });
   showImage();
   replaceSnapshot();
 
-  // Load the full tag index in the background, then refresh UI
-  await loadTagIndexAndCounts();
-  updateGalleryTagList();
-  if (!galleryView.classList.contains('hidden')) renderGallery();
-  updateTagToggleIcon();
+  // Load the full tag index in the background without blocking image load
+  loadTagIndexAndCounts();
 }
 
 loadImages();
