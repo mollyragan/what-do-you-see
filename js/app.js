@@ -1186,7 +1186,7 @@ function renderGallery({ preserveCols = false } = {}) {
 
     for (let k = 0; k < BATCH_SIZE && i < finalList.length; k++, i++) {
       const imgEl = document.createElement('img');
-      imgEl.src      = supaThumb(finalList[i].url);
+      imgEl.src      = finalList[i].url;
       imgEl.loading  = 'lazy';
       imgEl.decoding = 'async';
       imgEl.dataset.id = finalList[i].id;
