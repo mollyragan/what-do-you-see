@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>admin — what do you see</title>
+  <style>
+* { box-sizing: border-box; }
+
+body {
+  font-family: sans-serif;
+  margin: 0;
+  font-size: 14px;
+  color: black;
+  background: white;
+}
+
+/* --- LOGIN PANEL --- */
+#loginPanel {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#loginBtn {
+  all: unset;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  padding-left: 10px;
+  color: black;
+  cursor: pointer;
+}
+
+#loginBtn:hover,
+#loginBtn:active {
+  font-weight: bold;
+  transform: scale(1.05);
+}
+
+#loginInputs {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: all 0.3s ease;
+}
+
+#loginInputs input {
+  width: 180px;
+  border: none;
+  background: #f0f0f0;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+#loginInputs input:focus { outline: none; }
+
+#loginPanel.expanded #loginInputs {
+  max-height: 100px;
+  opacity: 1;
+}
+
+#status {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+  display: none;
+}
+
+/* --- MAIN WRAPPER --- */
+#adminWrapper {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 90%;
+  max-width: 500px;
+}
+
+/* --- DROPZONE --- */
+#dropZone {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border: 1px dashed rgba(0,0,0,0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+  background: #fafafa;
+}
+
+#dropZone.active { border-color: black; }
+
+#dropZoneText {
+  position: absolute;
+  font-size: 14px;
+  color: rgba(0,0,0,0.5);
+  pointer-events: none;
+  line-height: 1.6;
+}
+
+/* Preview grid inside dropzone */
+#previewGrid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 2px;
+  overflow: hidden;
+  align-content: start;
+}
+
+#previewGrid img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  display: block;
+}
+
+/* --- PROGRESS --- */
+#progressWrap {
+  width: 100%;
+  margin-top: 10px;
+  display: none;
+}
+
+#progressBar {
+  width: 0%;
+  height: 3px;
+  background: black;
+  transition: width 0.2s ease;
+}
+
+#progressLabel {
+  font-size: 12px;
+  color: rgba(0,0,0,0.6);
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* --- INPUTS --- */
+#inputs {
+  width: 100%;
+  margin-top: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+button {
+  font-size: 14px;
+  padding: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+button#submit {
+  background: black;
+  color: white;
+  border: none;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+}
+
+button#submit:hover { background: #333; }
+button#submit:disabled { background: #999; cursor: default; }
+  </style>
+</head>
+<body>
+
+<div id="loginPanel">
+  <button id="loginBtn">Log In</button>
+  <div id="loginInputs">
+    <input type="email" id="email" placeholder="Email" />
+    <input type="password" id="password" placeholder="Password" />
+  </div>
+  <span id="status">Not logged in</span>
+</div>
+
+<div id="adminWrapper">
+
+  <div id="dropZone">
+    <div id="dropZoneText">
+      Drag &amp; drop images<br>or click to select<br><br>
+      <span style="font-size:12px;opacity:0.6;">bulk upload supported<br>auto-cropped to 3:4</span>
+    </div>
+    <div id="previewGrid"></div>
+  </div>
+
+  <input
+    type="file"
+    id="fileInput"
+    accept="image/*"
+    multiple
+    style="display:none;"
+  />
+
+  <div id="progressWrap">
+    <div id="progressBar"></div>
+    <div id="progressLabel"></div>
+  </div>
+
+  <div id="inputs">
+    <button id="submit">Upload</button>
+  </div>
+
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+// ── CONFIG ──────────────────────────────────────────────
+const SUPABASE_URL     = 'https://fyogbaeayboxjhleaqoj.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5b2diYWVheWJveGpobGVhcW9qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczOTMxNDcsImV4cCI6MjA4Mjk2OTE0N30.JGa6qT6IkcNCJRxV5FYDFUiH1QWSKHABJ_Qu7BNV5m8';
+const ADMIN_USER_ID    = 'a30af14f-aa43-4b33-b573-4ab16be355d1';
+const STORAGE_BUCKET   = 'images';          // your storage bucket name
+const MASTER_MAX_W     = 1000;              // master image max width
+const THUMB_W          = 400;              // thumbnail width (3:4 → 400×533)
+const JPEG_QUALITY     = 0.82;
+// ────────────────────────────────────────────────────────
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let currentUser = null;
+let currentFiles = [];
+
+// ── LOGIN ────────────────────────────────────────────────
+const loginPanel  = document.getElementById('loginPanel');
+const loginBtn    = document.getElementById('loginBtn');
+const emailInput  = document.getElementById('email');
+const passwordInput = document.getElementById('password');
+const status      = document.getElementById('status');
+
+function updateLoginButton() {
+  loginBtn.innerText = currentUser ? 'Log Out' : 'Log In';
+}
+
+loginBtn.onclick = async () => {
+  if (currentUser) {
+    await supabase.auth.signOut();
+    currentUser = null;
+    status.innerText = 'Not logged in';
+    updateLoginButton();
+  } else {
+    loginPanel.classList.toggle('expanded');
+    if (loginPanel.classList.contains('expanded')) emailInput.focus();
+  }
+};
+
+async function login() {
+  const email    = emailInput.value;
+  const password = passwordInput.value;
+  if (!email || !password) return alert('Enter email and password');
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    status.innerText = `Error: ${error.message}`;
+  } else if (!data.user || data.user.id !== ADMIN_USER_ID) {
+    status.innerText = 'Not authorized';
+    await supabase.auth.signOut();
+  } else {
+    currentUser = data.user;
+    status.innerText = `Logged in as ${currentUser.email}`;
+  }
+
+  loginPanel.classList.remove('expanded');
+  emailInput.value = '';
+  passwordInput.value = '';
+  updateLoginButton();
+}
+
+[emailInput, passwordInput].forEach(el => {
+  el.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); await login(); }
+  });
+});
+
+async function checkUser() {
+  const { data } = await supabase.auth.getUser();
+  if (data.user && data.user.id === ADMIN_USER_ID) {
+    currentUser = data.user;
+    status.innerText = `Logged in as ${currentUser.email}`;
+  }
+  updateLoginButton();
+}
+checkUser();
+
+// ── DROPZONE ─────────────────────────────────────────────
+const dropZone    = document.getElementById('dropZone');
+const dropZoneText = document.getElementById('dropZoneText');
+const previewGrid = document.getElementById('previewGrid');
+const fileInput   = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('active'); });
+dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('active'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('active');
+  if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+function handleFiles(files) {
+  currentFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (!currentFiles.length) return;
+
+  previewGrid.innerHTML = '';
+  dropZoneText.style.display = 'none';
+
+  currentFiles.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = document.createElement('img');
+      img.src = e.target.result;
+      previewGrid.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── IMAGE PROCESSING ──────────────────────────────────────
+
+/**
+ * Crop an image to exactly targetW × targetH from the center,
+ * then return a Blob at the given JPEG quality.
+ */
+function cropAndResize(file, targetW, targetH, quality = JPEG_QUALITY) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+
+    img.onload = () => {
+      const srcW = img.naturalWidth;
+      const srcH = img.naturalHeight;
+
+      // Scale so the image covers targetW × targetH (cover logic)
+      const scale = Math.max(targetW / srcW, targetH / srcH);
+      const scaledW = srcW * scale;
+      const scaledH = srcH * scale;
+
+      // Center-crop offsets
+      const offsetX = (scaledW - targetW) / 2;
+      const offsetY = (scaledH - targetH) / 2;
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+
+      ctx.drawImage(
+        img,
+        -offsetX, -offsetY,
+        scaledW, scaledH
+      );
+
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(url);
+        resolve(blob);
+      }, 'image/jpeg', quality);
+    };
+
+    img.src = url;
+  });
+}
+
+/**
+ * Produces master (1000px wide, 3:4 crop) and
+ * thumbnail (400px wide, 3:4 crop) blobs.
+ */
+async function processImage(file) {
+  const masterH = Math.round(MASTER_MAX_W * 4 / 3);
+  const thumbH  = Math.round(THUMB_W * 4 / 3);
+
+  const [masterBlob, thumbBlob] = await Promise.all([
+    cropAndResize(file, MASTER_MAX_W, masterH),
+    cropAndResize(file, THUMB_W, thumbH),
+  ]);
+
+  return { masterBlob, thumbBlob };
+}
+
+// ── UPLOAD ────────────────────────────────────────────────
+const submitBtn   = document.getElementById('submit');
+const progressWrap  = document.getElementById('progressWrap');
+const progressBar   = document.getElementById('progressBar');
+const progressLabel = document.getElementById('progressLabel');
+
+function setProgress(done, total) {
+  const pct = Math.round((done / total) * 100);
+  progressBar.style.width = pct + '%';
+  progressLabel.innerText = `${done} / ${total} uploaded`;
+}
+
+submitBtn.addEventListener('click', async () => {
+  if (!currentUser)      return alert('You must be logged in to upload.');
+  if (!currentFiles.length) return alert('Please select at least one image.');
+
+  submitBtn.disabled = true;
+  progressWrap.style.display = 'block';
+  setProgress(0, currentFiles.length);
+
+  let successCount = 0;
+  let failCount    = 0;
+
+  for (let i = 0; i < currentFiles.length; i++) {
+    const file = currentFiles[i];
+    progressLabel.innerText = `Processing ${i + 1} / ${currentFiles.length}: ${file.name}`;
+
+    try {
+      const { masterBlob, thumbBlob } = await processImage(file);
+
+      const base     = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const masterName = `${base}.jpg`;
+      const thumbName  = `${base}_thumb.jpg`;
+
+      // Upload master
+      const { error: masterErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(masterName, masterBlob, { contentType: 'image/jpeg' });
+
+      if (masterErr) throw masterErr;
+
+      // Upload thumbnail
+      const { error: thumbErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(thumbName, thumbBlob, { contentType: 'image/jpeg' });
+
+      if (thumbErr) throw thumbErr;
+
+      // Get public URLs
+      const { data: masterUrlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(masterName);
+      const { data: thumbUrlData  } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(thumbName);
+
+      // Insert row — filename uses original name, url = master, thumbnail_url = thumb
+      const { error: dbErr } = await supabase
+        .from('images')
+        .insert([{
+          filename:      file.name,
+          url:           masterUrlData.publicUrl,
+          thumbnail_url: thumbUrlData.publicUrl,
+        }]);
+
+      if (dbErr) throw dbErr;
+
+      successCount++;
+    } catch (err) {
+      console.error(`Failed: ${file.name}`, err);
+      failCount++;
+    }
+
+    setProgress(i + 1, currentFiles.length);
+  }
+
+  submitBtn.disabled = false;
+
+  const msg = failCount === 0
+    ? `✓ ${successCount} image${successCount !== 1 ? 's' : ''} uploaded successfully.`
+    : `Done. ${successCount} succeeded, ${failCount} failed — check console for details.`;
+  progressLabel.innerText = msg;
+
+  // Reset
+  currentFiles = [];
+  previewGrid.innerHTML = '';
+  dropZoneText.style.display = '';
+  progressBar.style.width = '0%';
+  fileInput.value = '';
+});
+</script>
+
+</body>
+</html>
