@@ -994,7 +994,7 @@ async function saveTag(tag, x, y) {
   }
 
   tagToggleIcon.style.display = 'block';
-  renderGallery();
+  if (!galleryView.classList.contains('hidden')) renderGallery();
   updateGalleryTagList();
 }
 
@@ -1345,7 +1345,11 @@ if (galleryGrid) {
 
     historyStack = [];
     forwardStack = [];
-    nextDeck = buildDeck(currentIndex);
+    // Preserve the existing deck so the full-cycle guarantee isn't broken
+    // when jumping in from the gallery. Just remove the now-current image
+    // from wherever it sits in the remaining deck.
+    nextDeck = nextDeck.filter(idx => idx !== currentIndex);
+    if (nextDeck.length === 0) nextDeck = buildDeck(currentIndex);
     preloadNext();
 
     showTagging();
@@ -1572,18 +1576,18 @@ async function loadImages() {
     currentIndex = Math.floor(Math.random() * images.length);
   }
 
-  nextDeck = buildDeck(currentIndex);
-
   // Kick off preload of the first image immediately
   preloadImg.src = supaFullSmart(images[currentIndex].url, 85);
 
-  // Always open on tagging view regardless of last session
+  // Show the first image immediately without blocking on tag data
   showTagging({ fromHistory: true });
   showImage();
   replaceSnapshot();
 
-  // Load the full tag index in the background without blocking image load
-  loadTagIndexAndCounts();
+  // Load the tag index first so buildDeck knows which images are untagged,
+  // then build the deck with the correct tagged/untagged split.
+  await loadTagIndexAndCounts();
+  nextDeck = buildDeck(currentIndex);
 }
 
 loadImages();

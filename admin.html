@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>admin — what do you see</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
 * { box-sizing: border-box; }
 
@@ -11,83 +12,116 @@ body {
   font-size: 14px;
   color: black;
   background: white;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* --- LOGIN PANEL --- */
 #loginPanel {
   position: fixed;
-  top: 20px;
-  left: 20px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 1000;
+  background: white;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+#loginPanel.expanded {
+  border-color: rgba(0,0,0,0.1);
+}
+
+#loginBar {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 12px 16px;
 }
 
 #loginBtn {
   all: unset;
   font-size: 14px;
-  transition: all 0.2s ease;
-  padding-left: 10px;
   color: black;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 #loginBtn:hover,
 #loginBtn:active {
   font-weight: bold;
-  transform: scale(1.05);
-}
-
-#loginInputs {
-  display: flex;
-  flex-direction: row;
-  gap: 6px;
-  overflow: hidden;
-  max-height: 0;
-  opacity: 0;
-  transition: all 0.3s ease;
-}
-
-#loginInputs input {
-  width: 180px;
-  border: none;
-  background: #f0f0f0;
-  padding: 6px 8px;
-  font-size: 14px;
-}
-
-#loginInputs input:focus { outline: none; }
-
-#loginPanel.expanded #loginInputs {
-  max-height: 100px;
-  opacity: 1;
 }
 
 #status {
-  margin: 0;
   font-size: 12px;
-  opacity: 0.8;
-  display: none;
+  opacity: 0.6;
+  margin-left: 4px;
 }
 
-/* --- MAIN WRAPPER --- */
-#adminWrapper {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+#loginInputs {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+
+#loginInputs > .inner {
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  width: 90%;
-  max-width: 500px;
+  gap: 8px;
+}
+
+#loginPanel.expanded #loginInputs {
+  grid-template-rows: 1fr;
+  padding-bottom: 14px;
+}
+
+#loginInputs input {
+  width: 100%;
+  border: none;
+  background: #f0f0f0;
+  padding: 10px 12px;
+  font-size: 16px; /* 16px prevents iOS zoom */
+  border-radius: 6px;
+  font-family: inherit;
+}
+
+#loginInputs input:focus { outline: none; background: #e8e8e8; }
+
+#loginSubmit {
+  width: 100%;
+  background: black;
+  color: white;
+  border: none;
+  padding: 11px;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+#loginSubmit:active { background: #333; }
+
+/* --- MAIN LAYOUT --- */
+#adminWrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  padding-top: calc(52px + 16px); /* space for fixed login bar */
+  gap: 14px;
+  min-height: 0;
 }
 
 /* --- DROPZONE --- */
 #dropZone {
-  width: 100%;
-  aspect-ratio: 3 / 4;
+  flex: 1;
+  min-height: 0;
   border: 1px dashed rgba(0,0,0,0.4);
   display: flex;
   justify-content: center;
@@ -98,19 +132,18 @@ body {
   overflow: hidden;
   transition: border-color 0.2s ease;
   background: #fafafa;
+  border-radius: 6px;
 }
 
 #dropZone.active { border-color: black; }
 
 #dropZoneText {
-  position: absolute;
   font-size: 14px;
   color: rgba(0,0,0,0.5);
   pointer-events: none;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
-/* Preview grid inside dropzone */
 #previewGrid {
   position: absolute;
   inset: 0;
@@ -130,8 +163,6 @@ body {
 
 /* --- PROGRESS --- */
 #progressWrap {
-  width: 100%;
-  margin-top: 10px;
   display: none;
 }
 
@@ -140,120 +171,105 @@ body {
   height: 3px;
   background: black;
   transition: width 0.2s ease;
+  border-radius: 2px;
 }
 
 #progressLabel {
   font-size: 12px;
   color: rgba(0,0,0,0.6);
-  margin-top: 4px;
+  margin-top: 6px;
   text-align: center;
 }
 
-/* --- INPUTS --- */
-#inputs {
+/* --- UPLOAD BUTTON --- */
+#submit {
   width: 100%;
-  margin-top: 15px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-input[type="text"],
-input[type="email"],
-input[type="password"],
-button {
-  font-size: 14px;
-  padding: 8px;
-  width: 100%;
-  box-sizing: border-box;
-  font-family: inherit;
-}
-
-button#submit {
   background: black;
   color: white;
   border: none;
-  cursor: pointer;
+  padding: 16px;
+  font-size: 16px;
+  font-family: inherit;
   letter-spacing: 0.05em;
+  cursor: pointer;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
-button#submit:hover { background: #333; }
-button#submit:disabled { background: #999; cursor: default; }
+#submit:hover { background: #222; }
+#submit:active { background: #444; }
+#submit:disabled { background: #999; cursor: default; }
   </style>
 </head>
 <body>
 
 <div id="loginPanel">
-  <button id="loginBtn">Log In</button>
-  <div id="loginInputs">
-    <input type="email" id="email" placeholder="Email" />
-    <input type="password" id="password" placeholder="Password" />
+  <div id="loginBar">
+    <button id="loginBtn">Log In</button>
+    <span id="status"></span>
   </div>
-  <span id="status">Not logged in</span>
+  <div id="loginInputs">
+    <div class="inner">
+      <input type="email" id="email" placeholder="Email" autocomplete="email" />
+      <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
+      <button id="loginSubmit">Log In</button>
+    </div>
+  </div>
 </div>
 
 <div id="adminWrapper">
 
   <div id="dropZone">
     <div id="dropZoneText">
-      Drag &amp; drop images<br>or click to select<br><br>
+      Drag &amp; drop images<br>or tap to select<br><br>
       <span style="font-size:12px;opacity:0.6;">bulk upload supported<br>auto-cropped to 3:4</span>
     </div>
     <div id="previewGrid"></div>
   </div>
 
-  <input
-    type="file"
-    id="fileInput"
-    accept="image/*"
-    multiple
-    style="display:none;"
-  />
+  <input type="file" id="fileInput" accept="image/*" multiple style="display:none;" />
 
   <div id="progressWrap">
     <div id="progressBar"></div>
     <div id="progressLabel"></div>
   </div>
 
-  <div id="inputs">
-    <button id="submit">Upload</button>
-  </div>
+  <button id="submit">Upload</button>
 
 </div>
 
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
 
-// ── CONFIG ──────────────────────────────────────────────
-const SUPABASE_URL     = 'https://fyogbaeayboxjhleaqoj.supabase.co';
+const SUPABASE_URL      = 'https://fyogbaeayboxjhleaqoj.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5b2diYWVheWJveGpobGVhcW9qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczOTMxNDcsImV4cCI6MjA4Mjk2OTE0N30.JGa6qT6IkcNCJRxV5FYDFUiH1QWSKHABJ_Qu7BNV5m8';
-const ADMIN_USER_ID    = 'a30af14f-aa43-4b33-b573-4ab16be355d1';
-const STORAGE_BUCKET   = 'images';          // your storage bucket name
-const MASTER_MAX_W     = 1000;              // master image max width
-const THUMB_W          = 400;              // thumbnail width (3:4 → 400×533)
-const JPEG_QUALITY     = 0.82;
-// ────────────────────────────────────────────────────────
+const ADMIN_USER_ID     = '1af44252-2b44-4f0d-8854-5d53a4ca2e5a';
+const STORAGE_BUCKET    = 'images';
+const MASTER_MAX_W      = 1000;
+const THUMB_W           = 400;
+const JPEG_QUALITY      = 0.82;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let currentUser = null;
 let currentFiles = [];
 
 // ── LOGIN ────────────────────────────────────────────────
-const loginPanel  = document.getElementById('loginPanel');
-const loginBtn    = document.getElementById('loginBtn');
-const emailInput  = document.getElementById('email');
+const loginPanel    = document.getElementById('loginPanel');
+const loginBtn      = document.getElementById('loginBtn');
+const loginSubmitBtn = document.getElementById('loginSubmit');
+const emailInput    = document.getElementById('email');
 const passwordInput = document.getElementById('password');
-const status      = document.getElementById('status');
+const status        = document.getElementById('status');
 
 function updateLoginButton() {
   loginBtn.innerText = currentUser ? 'Log Out' : 'Log In';
+  status.innerText = currentUser ? `${currentUser.email}` : '';
 }
 
 loginBtn.onclick = async () => {
   if (currentUser) {
     await supabase.auth.signOut();
     currentUser = null;
-    status.innerText = 'Not logged in';
     updateLoginButton();
   } else {
     loginPanel.classList.toggle('expanded');
@@ -262,27 +278,33 @@ loginBtn.onclick = async () => {
 };
 
 async function login() {
-  const email    = emailInput.value;
+  const email    = emailInput.value.trim();
   const password = passwordInput.value;
   if (!email || !password) return alert('Enter email and password');
 
+  loginSubmitBtn.disabled = true;
+  loginSubmitBtn.innerText = 'Logging in…';
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
+  loginSubmitBtn.disabled = false;
+  loginSubmitBtn.innerText = 'Log In';
+
   if (error) {
-    status.innerText = `Error: ${error.message}`;
+    alert(`Error: ${error.message}`);
   } else if (!data.user || data.user.id !== ADMIN_USER_ID) {
-    status.innerText = 'Not authorized';
+    alert('Not authorized');
     await supabase.auth.signOut();
   } else {
     currentUser = data.user;
-    status.innerText = `Logged in as ${currentUser.email}`;
+    loginPanel.classList.remove('expanded');
+    emailInput.value = '';
+    passwordInput.value = '';
+    updateLoginButton();
   }
-
-  loginPanel.classList.remove('expanded');
-  emailInput.value = '';
-  passwordInput.value = '';
-  updateLoginButton();
 }
+
+loginSubmitBtn.addEventListener('click', login);
 
 [emailInput, passwordInput].forEach(el => {
   el.addEventListener('keydown', async (e) => {
@@ -294,17 +316,16 @@ async function checkUser() {
   const { data } = await supabase.auth.getUser();
   if (data.user && data.user.id === ADMIN_USER_ID) {
     currentUser = data.user;
-    status.innerText = `Logged in as ${currentUser.email}`;
   }
   updateLoginButton();
 }
 checkUser();
 
 // ── DROPZONE ─────────────────────────────────────────────
-const dropZone    = document.getElementById('dropZone');
+const dropZone     = document.getElementById('dropZone');
 const dropZoneText = document.getElementById('dropZoneText');
-const previewGrid = document.getElementById('previewGrid');
-const fileInput   = document.getElementById('fileInput');
+const previewGrid  = document.getElementById('previewGrid');
+const fileInput    = document.getElementById('fileInput');
 
 dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('active'); });
 dropZone.addEventListener('dragleave', ()  => dropZone.classList.remove('active'));
@@ -335,11 +356,6 @@ function handleFiles(files) {
 }
 
 // ── IMAGE PROCESSING ──────────────────────────────────────
-
-/**
- * Crop an image to exactly targetW × targetH from the center,
- * then return a Blob at the given JPEG quality.
- */
 function cropAndResize(file, targetW, targetH, quality = JPEG_QUALITY) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -349,12 +365,10 @@ function cropAndResize(file, targetW, targetH, quality = JPEG_QUALITY) {
       const srcW = img.naturalWidth;
       const srcH = img.naturalHeight;
 
-      // Scale so the image covers targetW × targetH (cover logic)
       const scale = Math.max(targetW / srcW, targetH / srcH);
       const scaledW = srcW * scale;
       const scaledH = srcH * scale;
 
-      // Center-crop offsets
       const offsetX = (scaledW - targetW) / 2;
       const offsetY = (scaledH - targetH) / 2;
 
@@ -363,11 +377,7 @@ function cropAndResize(file, targetW, targetH, quality = JPEG_QUALITY) {
       canvas.height = targetH;
       const ctx = canvas.getContext('2d');
 
-      ctx.drawImage(
-        img,
-        -offsetX, -offsetY,
-        scaledW, scaledH
-      );
+      ctx.drawImage(img, -offsetX, -offsetY, scaledW, scaledH);
 
       canvas.toBlob((blob) => {
         URL.revokeObjectURL(url);
@@ -379,10 +389,6 @@ function cropAndResize(file, targetW, targetH, quality = JPEG_QUALITY) {
   });
 }
 
-/**
- * Produces master (1000px wide, 3:4 crop) and
- * thumbnail (400px wide, 3:4 crop) blobs.
- */
 async function processImage(file) {
   const masterH = Math.round(MASTER_MAX_W * 4 / 3);
   const thumbH  = Math.round(THUMB_W * 4 / 3);
@@ -396,7 +402,7 @@ async function processImage(file) {
 }
 
 // ── UPLOAD ────────────────────────────────────────────────
-const submitBtn   = document.getElementById('submit');
+const submitBtn     = document.getElementById('submit');
 const progressWrap  = document.getElementById('progressWrap');
 const progressBar   = document.getElementById('progressBar');
 const progressLabel = document.getElementById('progressLabel');
@@ -408,7 +414,7 @@ function setProgress(done, total) {
 }
 
 submitBtn.addEventListener('click', async () => {
-  if (!currentUser)      return alert('You must be logged in to upload.');
+  if (!currentUser)         return alert('You must be logged in to upload.');
   if (!currentFiles.length) return alert('Please select at least one image.');
 
   submitBtn.disabled = true;
@@ -423,31 +429,33 @@ submitBtn.addEventListener('click', async () => {
     progressLabel.innerText = `Processing ${i + 1} / ${currentFiles.length}: ${file.name}`;
 
     try {
+      const base        = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const ext         = file.name.split('.').pop() || 'jpg';
+      const origName    = `originals/${base}.${ext}`;
+      const masterName  = `masters/${base}.jpg`;
+      const thumbName   = `thumbs/${base}.jpg`;
+
+      // Upload original first, before any processing
+      const { error: origErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .upload(origName, file, { contentType: file.type });
+      if (origErr) throw origErr;
+
       const { masterBlob, thumbBlob } = await processImage(file);
 
-      const base     = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const masterName = `${base}.jpg`;
-      const thumbName  = `${base}_thumb.jpg`;
-
-      // Upload master
       const { error: masterErr } = await supabase.storage
         .from(STORAGE_BUCKET)
         .upload(masterName, masterBlob, { contentType: 'image/jpeg' });
-
       if (masterErr) throw masterErr;
 
-      // Upload thumbnail
       const { error: thumbErr } = await supabase.storage
         .from(STORAGE_BUCKET)
         .upload(thumbName, thumbBlob, { contentType: 'image/jpeg' });
-
       if (thumbErr) throw thumbErr;
 
-      // Get public URLs
       const { data: masterUrlData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(masterName);
       const { data: thumbUrlData  } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(thumbName);
 
-      // Insert row — filename uses original name, url = master, thumbnail_url = thumb
       const { error: dbErr } = await supabase
         .from('images')
         .insert([{
@@ -455,7 +463,6 @@ submitBtn.addEventListener('click', async () => {
           url:           masterUrlData.publicUrl,
           thumbnail_url: thumbUrlData.publicUrl,
         }]);
-
       if (dbErr) throw dbErr;
 
       successCount++;
@@ -474,7 +481,6 @@ submitBtn.addEventListener('click', async () => {
     : `Done. ${successCount} succeeded, ${failCount} failed — check console for details.`;
   progressLabel.innerText = msg;
 
-  // Reset
   currentFiles = [];
   previewGrid.innerHTML = '';
   dropZoneText.style.display = '';
