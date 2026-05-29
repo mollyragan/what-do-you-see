@@ -940,8 +940,10 @@ function createTagOverlay(xPx, yPx) {
   });
 
   tagOverlay.addEventListener('click', (e) => e.stopPropagation());
-  tagOverlay.addEventListener('blur',  () => removeTagOverlay());
-}
+  tagOverlay.addEventListener('blur', async () => {
+    await saveIfNeeded();
+    removeTagOverlay();
+  });}
 
 function removeTagOverlay() {
   if (tagOverlay) { tagOverlay.remove(); tagOverlay = null; }
