@@ -139,9 +139,10 @@ function supaThumb(url, w = 280, h = 373, q = 60) {
 }
 
 function supaFull(url, w = 900, q = 75) {
+  const h = Math.round(w * 4 / 3);
   return url
     .replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
-    + `?width=${w}&quality=${q}`;
+    + `?width=${w}&height=${h}&quality=${q}&resize=cover`;
 }
 
 // Chooses width based on the actual wrapper size and device pixel ratio,
